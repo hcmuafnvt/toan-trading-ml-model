@@ -197,7 +197,7 @@ def stops_by_mode(df_bt, mode_cfg):
     else:
         raise ValueError("stop mode không hợp lệ")
 
-def backtest_and_metrics(df_bt, entries, exits, tp_series, sl_series, fees=FEES):
+def backtest_and_metrics(df_bt, entries, exits, tp_series, sl_series, fees=0.0):
     pf = vbt.Portfolio.from_signals(
         df_bt["close"],
         entries=entries,
@@ -210,23 +210,20 @@ def backtest_and_metrics(df_bt, entries, exits, tp_series, sl_series, fees=FEES)
     )
     stats = pf.stats()
 
-    # Lấy trades
-    trades = pf.trades.records_readable
-    if len(trades) == 0:
+    # --- Dùng records gốc thay vì records_readable ---
+    trades = pf.trades.records
+    if trades is None or len(trades) == 0:
         expectancy_pips = 0.0
         expectancy_usd = 0.0
     else:
-        # ✅ Đảm bảo tương thích cả hai định dạng cột (vbt cũ & mới)
-        entry_col = "Entry Price" if "Entry Price" in trades.columns else "Entry_Price"
-        exit_col  = "Exit Price" if "Exit Price" in trades.columns else "Exit_Price"
-        dir_col   = "Direction" if "Direction" in trades.columns else "Direction_Type"
-
-        # xác định hướng lệnh
-        sign = np.where(trades[dir_col].str.lower().str.contains("long"), 1, -1)
-        pips = (trades[exit_col].values - trades[entry_col].values) * sign * (1.0 / PIP_SIZE)
-
+        # các cột trong vectorbt mới
+        entry_price = trades["entry_price"].values
+        exit_price  = trades["exit_price"].values
+        direction   = trades["direction"].values  # 0 = long, 1 = short
+        sign = np.where(direction == 0, 1, -1)
+        pips = (exit_price - entry_price) * sign * (1.0 / PIP_SIZE)
         expectancy_pips = float(np.nanmean(pips))
-        expectancy_usd = expectancy_pips * PIP_USD  # mỗi pip = 10 USD với 1 lot
+        expectancy_usd  = expectancy_pips * PIP_USD
 
     return pf, stats, expectancy_pips, expectancy_usd
 
