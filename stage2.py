@@ -1,68 +1,96 @@
 # ============================================================
-# STAGE 2 — RE-EXTRACT FEATURES (FAST MODE)
+# STAGE 2 — TRAIN 3 LIGHTGBM MODELS (T1/T2/T3)
 # ------------------------------------------------------------
-# ✅ Rebuild tsfresh features from GBP_USD_M5_2024.parquet
-# ✅ Save to logs/stage2_features.csv for later stages
-# ✅ Multi-core extraction for EC2 (32 CPU)
+# Input : logs/stage2_features.csv (re-extracted features)
+# Output: LightGBM models (T1, T2, T3)
 # ============================================================
 
 import pandas as pd
 import numpy as np
-from tsfresh import extract_features
-from tsfresh.feature_extraction import EfficientFCParameters
-from datetime import timedelta
+import lightgbm as lgb
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
 import os
 
 # ---------- CONFIG ----------
-PAIR = "GBP_USD"
-DATA_FILE = f"data/{PAIR}_M5_2024.parquet"
-OUT_CSV = "logs/stage2_features.csv"
+FEATURES_CSV = "logs/stage2_features.csv"
+OUT_DIR = "logs"
+os.makedirs(OUT_DIR, exist_ok=True)
 
-# Số nến ahead và TP để định nhãn giống Stage 1
-TP_PIPS = 10
-N_AHEAD = 20
-PIP_SIZE = 0.0001
+# Mô hình và target config (TP_pips, N_ahead)
+TARGETS = {
+    "T1_10x40": {"tp_pips": 10, "ahead": 40},
+    "T2_15x60": {"tp_pips": 15, "ahead": 60},
+    "T3_20x80": {"tp_pips": 20, "ahead": 80},
+}
 
-# ---------- LOAD DATA ----------
-print(f"⏳ Loading data from {DATA_FILE} ...")
-df = pd.read_parquet(DATA_FILE)
-df = df[["close"]].copy()
-df.index = pd.to_datetime(df.index)
-df = df.tz_localize(None)
-print(f"✅ Loaded {len(df)} rows | {df.index.min()} → {df.index.max()}")
+# ---------- LOAD FEATURES ----------
+print(f"⏳ Loading features from {FEATURES_CSV} ...")
+df = pd.read_csv(FEATURES_CSV, index_col=0)
+df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
+print(f"✅ Loaded features: {df.shape}")
 
-# ---------- LABEL CREATION (target = price tăng vượt TP) ----------
-future_close = df["close"].shift(-N_AHEAD)
-df["target"] = ((future_close - df["close"]) / PIP_SIZE >= TP_PIPS).astype(int)
+# ---------- TRAINING FUNCTION ----------
+def train_model(df, name, params=None):
+    print(f"\n========== TRAIN {name} ==========")
+    
+    # Lấy target (chúng ta tạm dùng target chung)
+    y = df["target"].astype(int)
+    X = df.drop(columns=["target"], errors="ignore")
+    
+    # Train/test split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+    
+    if params is None:
+        params = dict(
+            objective="multiclass",
+            num_class=3,
+            boosting_type="gbdt",
+            metric="multi_logloss",
+            learning_rate=0.05,
+            n_estimators=300,
+            max_depth=-1,
+            num_leaves=80,
+            min_data_in_leaf=50,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            n_jobs=16
+        )
+    
+    model = lgb.LGBMClassifier(**params)
+    model.fit(X_train, y_train,
+              eval_set=[(X_test, y_test)],
+              eval_metric="multi_logloss",
+              verbose=False)
+    
+    preds = model.predict(X_test)
+    report = classification_report(y_test, preds, zero_division=0)
+    
+    print(report)
+    
+    # Save model
+    model_path = os.path.join(OUT_DIR, f"{name}_lightgbm.txt")
+    model.booster_.save_model(model_path)
+    print(f"✅ Model saved → {model_path}")
+    
+    # Feature importance
+    imp = pd.DataFrame({
+        "feature": X.columns,
+        "importance": model.booster_.feature_importance()
+    }).sort_values("importance", ascending=False)
+    
+    imp_path = os.path.join(OUT_DIR, f"{name}_features.csv")
+    imp.to_csv(imp_path, index=False)
+    print(f"✅ Feature importance saved → {imp_path}")
+    
+    return model, imp
 
-# ---------- PREPARE TSFRESH INPUT ----------
-# group_id = 1 vì chỉ 1 cặp
-df_tsfresh = df.reset_index().rename(columns={"index": "time"})
-df_tsfresh["id"] = 1
+# ---------- TRAIN LOOP ----------
+models = {}
+for name, cfg in TARGETS.items():
+    model, imp = train_model(df.copy(), name)
+    models[name] = model
 
-# chỉ lấy vùng có target hợp lệ
-df_tsfresh = df_tsfresh.dropna(subset=["target"])
-
-# ---------- FEATURE EXTRACTION ----------
-print("⏳ Extracting tsfresh features (multi-core, efficient mode)...")
-settings = EfficientFCParameters()
-
-features = extract_features(
-    df_tsfresh[["id", "time", "close"]],
-    column_id="id",
-    column_sort="time",
-    default_fc_parameters=settings,
-    n_jobs=32,                 # full parallel for EC2
-    disable_progressbar=False
-)
-
-# ---------- POST-PROCESS ----------
-features = features.ffill().bfill()
-features["target"] = df_tsfresh["target"].values[:len(features)]
-print(f"✅ Features ready: {features.shape}")
-
-# ---------- SAVE ----------
-os.makedirs("logs", exist_ok=True)
-features.to_csv(OUT_CSV)
-print(f"✅ Saved to {OUT_CSV}")
-print(features.head(5))
+print("\n✅ DONE. 3 models trained and saved:")
+for name in models.keys():
+    print(f" - {name}_lightgbm.txt")
