@@ -1,29 +1,37 @@
 """
-Stage 2 — tsfresh + LightGBM (text-only EC2 version)
-----------------------------------------------------
+STAGE 2 — FULL OPTIMIZED FOR EC2
+--------------------------------
+Feature extraction & training pipeline using tsfresh + LightGBM
+✅ Tận dụng tối đa 32 vCPU / 249 GB RAM
 ✅ BUY=+1 | SELL=-1 | TIMEOUT=0
-✅ Session bonus +5 pips London/NY
-✅ MinimalFCParameters (fast)
-✅ No charts, only text summary
+✅ Session-aware TP/SL (+5 pips London & NY)
+✅ EfficientFCParameters (~800 feature)
+✅ Text-only summary output (no charts)
+✅ Clean feature names to avoid JSON error
 """
 
+# ========== IMPORTS ==========
 import pandas as pd
 import numpy as np
+import re
+import warnings
+warnings.filterwarnings("ignore")
+
 from tsfresh import extract_features, select_features
-from tsfresh.feature_extraction import MinimalFCParameters
+from tsfresh.feature_extraction import EfficientFCParameters
 from tsfresh.utilities.dataframe_functions import impute
 from lightgbm import LGBMClassifier
 from sklearn.metrics import classification_report
-import re
 
 # ========== CONFIG ==========
 FILE = "data/GBP_USD_M5_2024.parquet"
 PIP = 0.0001
 SESSION_BONUS = 5
 RR = 1.0
-LOOKBACK_N = 120
-STRIDE = 30
-FC_PARAMS = MinimalFCParameters()
+LOOKBACK_N = 240           # ~20h dữ liệu M5
+STRIDE = 10                # lấy mỗi 10 nến (≈50 phút)
+FC_PARAMS = EfficientFCParameters()
+N_JOBS = 28                # sử dụng 30/32 core
 
 TARGETS = {
     "T1_10x40": {"tp": 10, "ahead": 40},
@@ -31,8 +39,9 @@ TARGETS = {
     "T3_20x80": {"tp": 20, "ahead": 80},
 }
 
-# ========== LOAD ==========
+# ========== LOAD DATA ==========
 df = pd.read_parquet(FILE)
+# Chuẩn hoá cột
 for base in ["mid_", "bid_", "ask_"]:
     if "close" not in df and f"{base}c" in df.columns:
         df["close"] = df[f"{base}c"]
@@ -40,6 +49,7 @@ for base in ["mid_", "bid_", "ask_"]:
         df["high"] = df[f"{base}h"]
     if "low" not in df and f"{base}l" in df.columns:
         df["low"] = df[f"{base}l"]
+
 df = df.dropna(subset=["close", "high", "low"]).copy()
 df["hour"] = df.index.hour
 def detect_session(h):
@@ -47,9 +57,10 @@ def detect_session(h):
     elif 12 <= h < 21: return "NewYork"
     else: return "Asia"
 df["session"] = df["hour"].map(detect_session)
+
 print(f"✅ Loaded {len(df):,} rows | {df.index.min()} → {df.index.max()}")
 
-# ========== LABEL ==========
+# ========== LABELING ==========
 def label_buy_sell(df, tp_pips=10, ahead=20, rr=1.0, pip=0.0001, bonus=0):
     n = len(df)
     res = np.zeros(n, dtype=np.int8)
@@ -75,7 +86,7 @@ for name, cfg in TARGETS.items():
     df[name] = label_buy_sell(df, tp_pips=cfg["tp"], ahead=cfg["ahead"], rr=RR, pip=PIP, bonus=SESSION_BONUS)
     print(f"Label {name}: {pd.Series(df[name]).value_counts().to_dict()}")
 
-# ========== WINDOW → TSFRESH ==========
+# ========== BUILD ROLLING WINDOWS ==========
 def build_long(series, window, stride):
     vals, n = series.values, len(series)
     ids, times, values, idxs = [], [], [], []
@@ -87,17 +98,29 @@ def build_long(series, window, stride):
         values.append(vals[t-window:t])
         idxs.append(t)
         t += stride
-    long_df = pd.DataFrame({"id": np.concatenate(ids), "time": np.concatenate(times), "close": np.concatenate(values)})
+    long_df = pd.DataFrame({
+        "id": np.concatenate(ids),
+        "time": np.concatenate(times),
+        "close": np.concatenate(values).astype("float32"),
+    })
     return long_df, np.array(idxs, dtype=int)
 
-print("⏳ Extracting tsfresh features...")
+print("⏳ Extracting tsfresh features (multi-core mode)...")
 long_df, sample_idx = build_long(df["close"], LOOKBACK_N, STRIDE)
-X = extract_features(long_df, column_id="id", column_sort="time",
-                     default_fc_parameters=FC_PARAMS, n_jobs=2, disable_progressbar=True)
+X = extract_features(
+    long_df,
+    column_id="id",
+    column_sort="time",
+    default_fc_parameters=FC_PARAMS,
+    n_jobs=N_JOBS,
+    chunksize=50,
+    disable_progressbar=False
+)
 impute(X)
 X = X.replace([np.inf, -np.inf], np.nan).dropna(axis=1)
-print(f"✅ Features shape: {X.shape}")
+print(f"✅ Features extracted: {X.shape[0]} samples × {X.shape[1]} features")
 
+# ========== UTILS ==========
 def clean_feature_names(df):
     df = df.copy()
     df.columns = [re.sub(r'[^0-9a-zA-Z_]+', '_', c) for c in df.columns]
@@ -113,22 +136,40 @@ def train_eval(X, y, name):
     n = len(X_sel); split = int(n*0.8)
     X_train, X_test = X_sel.iloc[:split], X_sel.iloc[split:]
     y_train, y_test = y_num[:split], y_num[split:]
-    clf = LGBMClassifier(objective="multiclass", num_class=3,
-                         n_estimators=400, learning_rate=0.05,
-                         subsample=0.8, colsample_bytree=0.8,
-                         random_state=42, n_jobs=-1)
+
+    clf = LGBMClassifier(
+        objective="multiclass",
+        num_class=3,
+        n_estimators=400,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        max_depth=-1,
+        n_jobs=30,
+        random_state=42
+    )
     clf.fit(X_train, y_train)
     y_pred = clf.predict(X_test)
-    print(f"\n[{name}] report (0=SELL,1=TIMEOUT,2=BUY)")
+
+    print(f"\n[{name}] Classification report (0=SELL,1=TIMEOUT,2=BUY)")
     print(classification_report(y_test, y_pred, digits=3))
+
     imp = pd.Series(clf.feature_importances_, index=X_sel.columns)
-    print(f"[{name}] top 5 features:\n{imp.sort_values(ascending=False).head(5)}")
+    top5 = imp.sort_values(ascending=False).head(5)
+    print(f"[{name}] Top-5 features:")
+    for k, v in top5.items():
+        print(f"  {k} : {v}")
+
+    # Optionally save model
+    clf.booster_.save_model(f"{name}_lightgbm.txt")
+    print(f"[{name}] model saved → {name}_lightgbm.txt")
 
 def get_labels(col):
     return df[col].values[sample_idx]
 
+# ========== RUN PIPELINE ==========
 for name in TARGETS.keys():
     y = get_labels(name)
     train_eval(X, y, name)
 
-print("\n✅ DONE — summary text only.")
+print("\n✅ DONE — EC2 full-optimized text summary.")
