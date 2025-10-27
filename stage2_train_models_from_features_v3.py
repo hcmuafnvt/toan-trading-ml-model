@@ -66,10 +66,12 @@ def train_model(df, target_col, name):
         train_set,
         valid_sets=[valid_set],
         num_boost_round=300,
-        early_stopping_rounds=30,
-        verbose_eval=50
+        callbacks=[
+            lgb.early_stopping(stopping_rounds=30, verbose=True),
+            lgb.log_evaluation(period=50)
+        ]
     )
-
+    
     # --- Evaluate ---
     y_pred = model.predict(X_test, num_iteration=model.best_iteration)
     y_pred_class = np.argmax(y_pred, axis=1)
