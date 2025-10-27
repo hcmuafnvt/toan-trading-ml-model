@@ -17,7 +17,7 @@ from sklearn.metrics import classification_report
 import re
 
 # ========== CONFIG ==========
-FILE = "GBP_USD_M5_2024.parquet"
+FILE = "data/GBP_USD_M5_2024.parquet"
 PIP = 0.0001
 SESSION_BONUS = 5
 RR = 1.0
