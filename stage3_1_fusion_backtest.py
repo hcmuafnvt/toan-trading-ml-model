@@ -89,10 +89,19 @@ def run_backtest(price, signal_series, stop_mode, tp_param, sl_param):
         tp = pd.Series(tp_param * PIP_SIZE, index=price.index)
         sl = pd.Series(sl_param * PIP_SIZE, index=price.index)
     elif stop_mode == "atr":
+        # 🔹 Chuẩn hóa index an toàn cho ATR
+        px = price.copy()
+        px.index = pd.to_datetime(px.index)
+        px.index = px.index.tz_localize(None)
+        px = px.sort_index()
+
         atr = AverageTrueRange(
-            high=price["high"], low=price["low"], close=price["close"], window=14
+            high=px["high"],
+            low=px["low"],
+            close=px["close"],
+            window=14
         ).average_true_range().ffill().bfill()
-        # atr is in price units; convert to pips multiplier
+
         tp = (atr * tp_param).clip(lower=1e-7)
         sl = (atr * sl_param).clip(lower=1e-7)
     elif stop_mode == "vol":
@@ -120,7 +129,8 @@ def run_backtest(price, signal_series, stop_mode, tp_param, sl_param):
         sl_stop=sl,
         direction="both",
         size=1.0,
-        fees=FEES
+        fees=FEES,
+        freq="5T"  # M5 timeframe
     )
     stats = pf.stats()
     trades = pf.trades.records  # raw records
