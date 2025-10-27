@@ -204,28 +204,30 @@ def backtest_and_metrics(df_bt, entries, exits, tp_series, sl_series, fees=FEES)
         exits=exits,
         tp_stop=tp_series,
         sl_stop=sl_series,
-        size=1.0,            # notional placeholder (không dùng lot ở đây)
+        size=1.0,
         fees=fees,
         direction="both"
     )
     stats = pf.stats()
-    # Expectancy thủ công dựa trên pips và USD (1 lot)
+
     # Lấy trades
     trades = pf.trades.records_readable
     if len(trades) == 0:
         expectancy_pips = 0.0
-        expectancy_usd  = 0.0
+        expectancy_usd = 0.0
     else:
-        # pips = (Exit - Entry) * sign * 10000
-        # sign = +1 nếu long, -1 nếu short
-        sign = np.where(trades["Direction"].str.lower().str.contains("long"), 1, -1)
-        pips = (trades["Exit Price"].values - trades["Entry Price"].values) * sign * (1.0 / PIP_SIZE)
-        # expectancy = mean(pips)
-        expectancy_pips = float(np.nanmean(pips))
-        expectancy_usd  = expectancy_pips * PIP_USD  # 1 lot
+        # ✅ Đảm bảo tương thích cả hai định dạng cột (vbt cũ & mới)
+        entry_col = "Entry Price" if "Entry Price" in trades.columns else "Entry_Price"
+        exit_col  = "Exit Price" if "Exit Price" in trades.columns else "Exit_Price"
+        dir_col   = "Direction" if "Direction" in trades.columns else "Direction_Type"
 
-    # Đổi Total Return [%] sang USD với 1 lot thì cần quy ước thêm vốn ban đầu.
-    # Ở đây ta vẫn báo cáo PF / Win Rate / Return % từ vectorbt
+        # xác định hướng lệnh
+        sign = np.where(trades[dir_col].str.lower().str.contains("long"), 1, -1)
+        pips = (trades[exit_col].values - trades[entry_col].values) * sign * (1.0 / PIP_SIZE)
+
+        expectancy_pips = float(np.nanmean(pips))
+        expectancy_usd = expectancy_pips * PIP_USD  # mỗi pip = 10 USD với 1 lot
+
     return pf, stats, expectancy_pips, expectancy_usd
 
 def run_one_config(df, X, sample_idx, fusion_mode, stop_cfg):
