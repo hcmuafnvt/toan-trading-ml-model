@@ -89,19 +89,17 @@ def run_backtest(price, signal_series, stop_mode, tp_param, sl_param):
         tp = pd.Series(tp_param * PIP_SIZE, index=price.index)
         sl = pd.Series(sl_param * PIP_SIZE, index=price.index)
     elif stop_mode == "atr":
-        # 🔹 Chuẩn hóa index an toàn cho ATR
-        px = price.copy()
-        px.index = pd.to_datetime(px.index)
-        px.index = px.index.tz_localize(None)
-        px = px.sort_index()
+        # 🔧 Fix bug cannot reindex in ta.volatility.AverageTrueRange
+        px = price.copy().reset_index(drop=True)
 
         atr = AverageTrueRange(
             high=px["high"],
             low=px["low"],
             close=px["close"],
             window=14
-        ).average_true_range().ffill().bfill()
+        ).average_true_range()
 
+        atr.index = price.index  # gán lại index gốc sau khi tính xong
         tp = (atr * tp_param).clip(lower=1e-7)
         sl = (atr * sl_param).clip(lower=1e-7)
     elif stop_mode == "vol":
@@ -130,7 +128,7 @@ def run_backtest(price, signal_series, stop_mode, tp_param, sl_param):
         direction="both",
         size=1.0,
         fees=FEES,
-        freq="5T"  # M5 timeframe
+        freq="5min"  # M5 timeframe
     )
     stats = pf.stats()
     trades = pf.trades.records  # raw records
