@@ -1,11 +1,12 @@
 """
-STAGE 3 — Fusion + VectorBT Backtest (FINAL)
---------------------------------------------
-✅ Load 3 LightGBM models (T1,T2,T3)
-✅ Load đúng feature list (*.csv)
-✅ Majority-vote fusion BUY/SELL/TIMEOUT
+STAGE 3 — Fusion + VectorBT Backtest (FINAL FIXED)
+--------------------------------------------------
+✅ Load 3 LightGBM models + feature lists từ folder logs/
+✅ Majority vote fusion BUY/SELL/TIMEOUT
 ✅ Backtest bằng vectorbt
-✅ EC2-optimized (n_jobs=28)
+✅ EC2 optimized (n_jobs=28)
+✅ Tự bỏ qua metric thiếu
+✅ Lưu kết quả summary vào logs/stage3_results.txt
 """
 
 import pandas as pd
@@ -15,26 +16,28 @@ import vectorbt as vbt
 from tsfresh import extract_features
 from tsfresh.feature_extraction import EfficientFCParameters
 from tsfresh.utilities.dataframe_functions import impute
-import re, warnings
+import re, warnings, os
 warnings.filterwarnings("ignore")
 
 # ========= CONFIG =========
-PAIR = "GBP_USD"
-FILE = f"data/{PAIR}_M5_2024.parquet"
+DATA_FILE = "data/GBP_USD_M5_2024.parquet"
 PIP_SIZE = 0.0001
 LOOKBACK_N = 240
 STRIDE = 10
 FC_PARAMS = EfficientFCParameters()
 N_JOBS = 28
 
+LOG_DIR = "logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+
 MODELS = {
-    "T1_10x40": "logs/T1_10x40_lightgbm.txt",
-    "T2_15x60": "logs/T2_15x60_lightgbm.txt",
-    "T3_20x80": "logs/T3_20x80_lightgbm.txt",
+    "T1_10x40": os.path.join(LOG_DIR, "T1_10x40_lightgbm.txt"),
+    "T2_15x60": os.path.join(LOG_DIR, "T2_15x60_lightgbm.txt"),
+    "T3_20x80": os.path.join(LOG_DIR, "T3_20x80_lightgbm.txt"),
 }
 
 # ========= LOAD PRICE =========
-df = pd.read_parquet(FILE)
+df = pd.read_parquet(DATA_FILE)
 for base in ["mid_", "bid_", "ask_"]:
     if "close" not in df and f"{base}c" in df.columns:
         df["close"] = df[f"{base}c"]
@@ -77,7 +80,7 @@ print(f"✅ Features ready: {X.shape}")
 pred_df = pd.DataFrame(index=X.index)
 for name, path in MODELS.items():
     model = lgb.Booster(model_file=path)
-    feat_file = f"logs/{name}_features.csv"
+    feat_file = os.path.join(LOG_DIR, f"{name}_features.csv")
     feat_names = pd.read_csv(feat_file, header=None)[0].tolist()
     common = [c for c in feat_names if c in X.columns]
     X_pred = X[common].copy()
@@ -112,12 +115,40 @@ pf = vbt.Portfolio.from_signals(
     direction="both"
 )
 
-print("\n========== FUSION BACKTEST ==========")
 stats = pf.stats()
-print(f"Total Trades : {stats['Total Trades']}")
-print(f"Win Rate [%] : {stats['Win Rate [%]']:.2f}")
-print(f"Total Return [%] : {stats['Total Return [%]']:.2f}")
-print(f"Profit Factor : {stats['Profit Factor']:.2f}")
-print(f"Max Drawdown [%] : {stats['Max Drawdown [%]']:.2f}")
-print(f"Expectancy [%] : {stats['Expectancy [%]']:.2f}")
-print("====================================")
+
+# ========= PRINT SUMMARY =========
+print("\n========== FUSION BACKTEST ==========")
+metrics = [
+    "Total Trades",
+    "Win Rate [%]",
+    "Total Return [%]",
+    "Profit Factor",
+    "Max Drawdown [%]",
+    "Sharpe Ratio",
+    "Sortino Ratio",
+    "Calmar Ratio"
+]
+
+# Thêm Expectancy nếu có
+if "Expectancy [%]" in stats.index:
+    metrics.append("Expectancy [%]")
+
+summary_lines = []
+for m in metrics:
+    if m in stats.index:
+        val = stats[m]
+        if isinstance(val, (int, float, np.floating)):
+            summary_lines.append(f"{m:<20}: {val:.2f}")
+        else:
+            summary_lines.append(f"{m:<20}: {val}")
+        print(summary_lines[-1])
+
+# ========= SAVE LOG =========
+out_file = os.path.join(LOG_DIR, "stage3_results.txt")
+with open(out_file, "w") as f:
+    f.write("========== FUSION BACKTEST ==========\n")
+    f.write("\n".join(summary_lines))
+    f.write("\n====================================\n")
+
+print(f"\n✅ Summary saved to {out_file}")
