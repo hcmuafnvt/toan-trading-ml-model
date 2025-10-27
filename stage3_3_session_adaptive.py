@@ -108,7 +108,7 @@ for ss in ["Asia","London","NewYork"]:
 res=pd.DataFrame(rows,columns=["Session","Regime","PF","Win%","Exp(p)","Samples"])
 res.to_csv("logs/stage3_3_grid.csv",index=False)
 
-pf_all,st_all,exp_all=backtest(price["close"]>0)
+st_all, exp_all = backtest(price["close"] > 0)
 print("\n========== FINAL PORTFOLIO ==========")
 print(st_all.to_string())
 print(f"Expectancy={exp_all:.2f}p ($ {exp_all*PIP_USD:.2f})")
