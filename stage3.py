@@ -1,15 +1,18 @@
 """
-STAGE 4 — Fusion Optimizer (FINAL)
-----------------------------------
-✅ 3 fusion modes: 'majority', 'weighted', 'buy_only'
-✅ TP/SL: 'fixed', 'atr', 'vol'
-✅ Expectancy per trade + P/L USD với 1 lot = 100,000 (GBPUSD: 1 pip = 10 USD)
-✅ Đọc data từ data/, model + features từ logs/
-✅ Lưu kết quả grid vào logs/stage4_results.csv
+STAGE 3.1 — Analyzer (stability & attribution)
+----------------------------------------------
+So sánh 3 cấu hình mạnh nhất:
+  1) weighted + vol
+  2) weighted + atr
+  3) majority + vol
+
+✅ Text-only
+✅ No fees
+✅ Recompute signals & backtest
+✅ Breakdown: BUY/SELL, Session (Asia/London/NY), Monthly (YYYY-MM)
 """
 
-import os
-import re
+import os, re, warnings
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
@@ -17,46 +20,60 @@ import vectorbt as vbt
 from tsfresh import extract_features
 from tsfresh.feature_extraction import EfficientFCParameters
 from tsfresh.utilities.dataframe_functions import impute
-import warnings
+
 warnings.filterwarnings("ignore")
 
-# ===================== CONFIG =====================
+# ------------------- CONFIG -------------------
 DATA_FILE = "data/GBP_USD_M5_2024.parquet"
 LOG_DIR   = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Feature extraction (phải khớp Stage 2/3)
+# Feature extraction (khớp Stage 2/3/4)
 LOOKBACK_N = 240
 STRIDE     = 10
 N_JOBS     = 28
 FC_PARAMS  = EfficientFCParameters()
 
-# 3 models + feature lists tương ứng (đã tạo ở Stage 2)
+# Pip & Lot (GBPUSD)
+PIP_SIZE = 0.0001
+PIP_USD  = 10.0  # 1 pip = $10 với 1 lot = 100,000
+
+# 3 mô hình đã train (Stage 2)
 MODELS = {
     "T1_10x40": os.path.join(LOG_DIR, "T1_10x40_lightgbm.txt"),
     "T2_15x60": os.path.join(LOG_DIR, "T2_15x60_lightgbm.txt"),
     "T3_20x80": os.path.join(LOG_DIR, "T3_20x80_lightgbm.txt"),
 }
 
-# Pip & Lot
-PIP_SIZE   = 0.0001
-PIP_USD    = 10.0  # GBPUSD, 1 pip = $10 cho 1 lot = 100,000
-
-# Grid tham số để thử
-FUSION_MODES = ["majority", "weighted", "buy_only"]
-STOP_MODES   = [
-    {"name":"fixed", "tp_pips":10, "sl_pips":10},
-    {"name":"atr",   "mult_tp":1.5, "mult_sl":1.5, "atr_window":14},
-    {"name":"vol",   "mult_tp":2.0, "mult_sl":2.0, "vol_window":120}
+# 3 cấu hình cần phân tích sâu
+CONFIGS = [
+    {"fusion":"weighted", "stop":"vol", "params":{"mult_tp":2.0, "mult_sl":2.0, "vol_window":120}},
+    {"fusion":"weighted", "stop":"atr", "params":{"mult_tp":1.5, "mult_sl":1.5, "atr_window":14}},
+    {"fusion":"majority", "stop":"vol", "params":{"mult_tp":2.0, "mult_sl":2.0, "vol_window":120}},
 ]
-WEIGHTED_THRESH = 0.5   # ngưỡng vote soft: sum(pBUY - pSELL) / n_models > 0.5 → BUY, < -0.5 → SELL
-FEES = 0.0002           # phí giả định (theo tỉ lệ giá) cho vectorbt
 
-# ===================== UTILS =====================
+# ------------------- HELPERS -------------------
 def clean_cols(df):
     df = df.copy()
     df.columns = [re.sub(r'[^0-9a-zA-Z_]+', '_', c) for c in df.columns]
     return df
+
+def ensure_ohlc(df):
+    for base in ["mid_", "bid_", "ask_"]:
+        if "close" not in df and f"{base}c" in df.columns:
+            df["close"] = df[f"{base}c"]
+        if "high" not in df and f"{base}h" in df.columns:
+            df["high"] = df[f"{base}h"]
+        if "low" not in df and f"{base}l" in df.columns:
+            df["low"] = df[f"{base}l"]
+    if not {"close","high","low"}.issubset(df.columns):
+        raise ValueError("Data cần cột close/high/low.")
+    return df
+
+def detect_session_from_hour(h):
+    if 7 <= h < 15: return "London"
+    elif 12 <= h < 21: return "NewYork"
+    else: return "Asia"
 
 def build_long(series, window, stride):
     vals, n = series.values, len(series)
@@ -76,51 +93,32 @@ def build_long(series, window, stride):
     })
     return long_df, np.array(idxs, dtype=int)
 
-def ensure_ohlc(df):
-    # Chuẩn hoá cột close/high/low
-    for base in ["mid_", "bid_", "ask_"]:
-        if "close" not in df and f"{base}c" in df.columns:
-            df["close"] = df[f"{base}c"]
-        if "high" not in df and f"{base}h" in df.columns:
-            df["high"] = df[f"{base}h"]
-        if "low" not in df and f"{base}l" in df.columns:
-            df["low"] = df[f"{base}l"]
-    if not {"close","high","low"}.issubset(df.columns):
-        raise ValueError("Data cần có cột close/high/low. Hãy map từ mid_*/bid_*/ask_* nếu cần.")
-    return df
-
 def extract_tsfresh_features(close, lookback, stride, n_jobs):
     long_df, sample_idx = build_long(close, lookback, stride)
     X = extract_features(
-        long_df,
-        column_id="id", column_sort="time",
+        long_df, column_id="id", column_sort="time",
         default_fc_parameters=FC_PARAMS,
         n_jobs=n_jobs, disable_progressbar=False
     )
     impute(X)
-    X = X.replace([np.inf, -np.inf], np.nan).dropna(axis=1)
+    X = X.replace([np.inf,-np.inf], np.nan).dropna(axis=1)
     X = clean_cols(X)
     return X, sample_idx
 
 def load_models_and_predict(X):
-    """Trả về pred hard-class (0/1/2) và soft probs cho từng model"""
-    preds_hard = {}
-    probs_soft = {}
+    preds_hard, probs_soft = {}, {}
     for name, mpath in MODELS.items():
         booster = lgb.Booster(model_file=mpath)
         feat_file = os.path.join(LOG_DIR, f"{name}_features.csv")
         feat_names = pd.read_csv(feat_file, header=None)[0].tolist()
         common = [c for c in feat_names if c in X.columns]
-        X_pred = X[common].copy()
-        probs = booster.predict(X_pred, predict_disable_shape_check=True)  # shape (n,3)
+        probs = booster.predict(X[common], predict_disable_shape_check=True)
         probs_soft[name] = probs
-        hard = np.argmax(probs, axis=1)  # 0=SELL, 1=TIMEOUT, 2=BUY
-        preds_hard[name] = hard
-        print(f"✅ {name} predict ok | features used: {len(common)}")
+        preds_hard[name] = np.argmax(probs, axis=1)  # 0=SELL,1=TIMEOUT,2=BUY
+        print(f"  - {name}: used {len(common)} features")
     return preds_hard, probs_soft
 
-def fusion_signal(preds_hard, probs_soft, mode="majority", weighted_thresh=WEIGHTED_THRESH):
-    """Trả về Series signal ∈ {-1,0,1} (SELL, FLAT, BUY) theo fusion mode"""
+def fusion_signal(preds_hard, probs_soft, mode="weighted", weighted_thresh=0.5):
     model_names = list(preds_hard.keys())
     n = len(next(iter(preds_hard.values())))
     sig = np.zeros(n, dtype=np.int8)
@@ -129,75 +127,53 @@ def fusion_signal(preds_hard, probs_soft, mode="majority", weighted_thresh=WEIGH
         mat = np.column_stack([preds_hard[m] for m in model_names])
         vote_buy  = (mat == 2).sum(axis=1)
         vote_sell = (mat == 0).sum(axis=1)
-        sig = np.where(vote_buy >= 2, 1, np.where(vote_sell >= 2, -1, 0))
+        sig = np.where(vote_buy >= 2, 2, np.where(vote_sell >= 2, 0, 1))  # 2=BUY,0=SELL,1=TIMEOUT
 
     elif mode == "weighted":
-        # score = avg(pBUY - pSELL)
-        buy_scores  = []
-        sell_scores = []
+        buy_scores, sell_scores = [], []
         for m in model_names:
-            # probs_soft[m][:,2] = pBUY ; probs_soft[m][:,0] = pSELL
             buy_scores.append(probs_soft[m][:,2])
             sell_scores.append(probs_soft[m][:,0])
         buy_scores  = np.column_stack(buy_scores).mean(axis=1)
         sell_scores = np.column_stack(sell_scores).mean(axis=1)
-        score = buy_scores - sell_scores  # range [-1,1]
-        sig = np.where(score >  weighted_thresh,  1,
-              np.where(score < -weighted_thresh, -1, 0))
-
-    elif mode == "buy_only":
-        # chỉ vào long khi >=2 model vote BUY, còn lại = 0 (không short)
-        mat = np.column_stack([preds_hard[m] for m in model_names])
-        vote_buy = (mat == 2).sum(axis=1)
-        sig = np.where(vote_buy >= 2, 1, 0)
+        score = buy_scores - sell_scores
+        sig = np.where(score >  weighted_thresh, 2,
+              np.where(score < -weighted_thresh, 0, 1))
 
     else:
         raise ValueError("fusion mode không hợp lệ")
-
     return pd.Series(sig)
 
 def calc_atr(df, window=14):
-    # True Range (TR) cần high/low/close
     h, l, c = df["high"], df["low"], df["close"]
     prev_c = c.shift(1)
-    tr = pd.concat([
-        (h - l),
-        (h - prev_c).abs(),
-        (l - prev_c).abs()
-    ], axis=1).max(axis=1)
+    tr = pd.concat([(h-l), (h-prev_c).abs(), (l-prev_c).abs()], axis=1).max(axis=1)
     atr = tr.ewm(alpha=1/window, adjust=False).mean()
     return atr
 
 def calc_vol(close, window=120):
-    # Độ biến động theo std của returns (close-to-close)
     ret = close.pct_change()
     vol = ret.rolling(window, min_periods=window//2).std().fillna(method="bfill")
-    # đổi vol (tỷ lệ) về "giá-tương-đương" bằng cách nhân close
     return (vol * close).abs()
 
-def stops_by_mode(df_bt, mode_cfg):
-    name = mode_cfg["name"]
-    if name == "fixed":
-        tp = np.full(len(df_bt), mode_cfg["tp_pips"] * PIP_SIZE)
-        sl = np.full(len(df_bt), mode_cfg["sl_pips"] * PIP_SIZE)
+def stops_by_mode(df_bt, stop_name, params):
+    if stop_name == "vol":
+        vol = calc_vol(df_bt["close"], window=params.get("vol_window",120))
+        tp = vol * params.get("mult_tp",2.0)
+        sl = vol * params.get("mult_sl",2.0)
+        return tp, sl
+    if stop_name == "atr":
+        atr = calc_atr(df_bt, window=params.get("atr_window",14))
+        tp = atr * params.get("mult_tp",1.5)
+        sl = atr * params.get("mult_sl",1.5)
+        return tp, sl
+    if stop_name == "fixed":
+        tp = np.full(len(df_bt), params.get("tp_pips",10) * PIP_SIZE)
+        sl = np.full(len(df_bt), params.get("sl_pips",10) * PIP_SIZE)
         return pd.Series(tp, index=df_bt.index), pd.Series(sl, index=df_bt.index)
+    raise ValueError("stop mode không hợp lệ")
 
-    elif name == "atr":
-        atr = calc_atr(df_bt, window=mode_cfg.get("atr_window",14))
-        tp = atr * mode_cfg.get("mult_tp",1.5)
-        sl = atr * mode_cfg.get("mult_sl",1.5)
-        return tp, sl
-
-    elif name == "vol":
-        vol = calc_vol(df_bt["close"], window=mode_cfg.get("vol_window",120))
-        tp = vol * mode_cfg.get("mult_tp",2.0)
-        sl = vol * mode_cfg.get("mult_sl",2.0)
-        return tp, sl
-
-    else:
-        raise ValueError("stop mode không hợp lệ")
-
-def backtest_and_metrics(df_bt, entries, exits, tp_series, sl_series, fees=0.0):
+def backtest(df_bt, entries, exits, tp_series, sl_series, fees=0.0):
     pf = vbt.Portfolio.from_signals(
         df_bt["close"],
         entries=entries,
@@ -209,101 +185,142 @@ def backtest_and_metrics(df_bt, entries, exits, tp_series, sl_series, fees=0.0):
         direction="both"
     )
     stats = pf.stats()
-
-    # --- Dùng records gốc thay vì records_readable ---
     trades = pf.trades.records
-    if trades is None or len(trades) == 0:
-        expectancy_pips = 0.0
-        expectancy_usd = 0.0
-    else:
-        # các cột trong vectorbt mới
-        entry_price = trades["entry_price"].values
-        exit_price  = trades["exit_price"].values
-        direction   = trades["direction"].values  # 0 = long, 1 = short
-        sign = np.where(direction == 0, 1, -1)
-        pips = (exit_price - entry_price) * sign * (1.0 / PIP_SIZE)
-        expectancy_pips = float(np.nanmean(pips))
-        expectancy_usd  = expectancy_pips * PIP_USD
+    return pf, stats, trades
 
-    return pf, stats, expectancy_pips, expectancy_usd
-
-def run_one_config(df, X, sample_idx, fusion_mode, stop_cfg):
-    # 1) Predict mỗi model
-    preds_hard, probs_soft = load_models_and_predict(X)
-    # 2) Fusion tín hiệu
-    sig = fusion_signal(preds_hard, probs_soft, mode=fusion_mode)
-    # 3) Mapping về chuỗi thời gian gốc
-    df_bt = df.iloc[sample_idx].copy()
-    df_bt["signal"] = sig.values
-
-    # 4) Entries / exits
-    entries = (df_bt["signal"] == 1)
-    exits   = (df_bt["signal"] == -1)
-
-    # 5) TP/SL theo chế độ
-    tp_series, sl_series = stops_by_mode(df_bt, stop_cfg)
-
-    # 6) Backtest + metrics
-    pf, stats, exp_pips, exp_usd = backtest_and_metrics(df_bt, entries, exits, tp_series, sl_series, fees=FEES)
-
-    # Chuẩn hoá metric output
-    def get_stat(key, default=np.nan):
-        return float(stats[key]) if key in stats.index else default
-
-    out = {
-        "fusion_mode": fusion_mode,
-        "stop_mode": stop_cfg["name"],
-        "tp_param": stop_cfg.get("tp_pips", stop_cfg.get("mult_tp", np.nan)),
-        "sl_param": stop_cfg.get("sl_pips", stop_cfg.get("mult_sl", np.nan)),
-        "Total Trades": get_stat("Total Trades", 0.0),
-        "Win Rate [%]": get_stat("Win Rate [%]"),
-        "Total Return [%]": get_stat("Total Return [%]"),
-        "Profit Factor": get_stat("Profit Factor"),
-        "Max Drawdown [%]": get_stat("Max Drawdown [%]"),
-        "Expectancy (pips)": exp_pips,
-        "Expectancy (USD_1lot)": exp_usd
+def pf_from_trades(trades):
+    if trades is None or len(trades)==0:
+        return {"trades":0, "win_rate":0.0, "pf":0.0, "exp_pips":0.0, "exp_usd":0.0}
+    entry_price = trades["entry_price"].values
+    exit_price  = trades["exit_price"].values
+    direction   = trades["direction"].values  # 0=long,1=short
+    sign = np.where(direction==0, 1, -1)
+    pips = (exit_price - entry_price) * sign * (1.0 / PIP_SIZE)
+    pnl  = (exit_price - entry_price) * sign  # tính bằng "giá"
+    wins = pnl > 0
+    sum_win = pnl[wins].sum()
+    sum_lose = pnl[~wins].sum()
+    pf = (sum_win / abs(sum_lose)) if sum_lose < 0 else np.inf
+    exp_pips = float(np.nanmean(pips)) if len(pips)>0 else 0.0
+    return {
+        "trades": int(len(trades)),
+        "win_rate": float(wins.mean()*100.0),
+        "pf": float(pf),
+        "exp_pips": exp_pips,
+        "exp_usd": exp_pips * PIP_USD
     }
+
+def attach_session(df_bt):
+    # thêm session theo giờ
+    hours = df_bt.index.hour
+    sess = [detect_session_from_hour(h) for h in hours]
+    df_bt = df_bt.copy()
+    df_bt["session"] = sess
+    return df_bt
+
+def by_session(trades, df_bt):
+    # map entry_idx -> timestamp -> session
+    if trades is None or len(trades)==0:
+        return {}
+    entry_idx = trades["entry_idx"].values
+    entry_ts  = df_bt.index.values[entry_idx]
+    entry_sess = pd.Series(entry_ts).map(lambda ts: detect_session_from_hour(pd.Timestamp(ts).hour)).values
+    out = {}
+    for sess in ["Asia","London","NewYork"]:
+        mask = (entry_sess == sess)
+        sub = trades[mask]
+        out[sess] = pf_from_trades(sub)
     return out
 
-# ===================== MAIN =====================
+def by_month(trades, df_bt):
+    if trades is None or len(trades)==0:
+        return pd.DataFrame()
+    entry_idx = trades["entry_idx"].values
+    entry_ts  = pd.to_datetime(df_bt.index.values[entry_idx])
+    months = pd.PeriodIndex(entry_ts, freq="M").astype(str)
+    rows = []
+    for m in sorted(pd.unique(months)):
+        mask = (months == m)
+        sub = trades[mask]
+        row = pf_from_trades(sub)
+        row["month"] = m
+        rows.append(row)
+    return pd.DataFrame(rows).sort_values("month")
+
+# ------------------- MAIN -------------------
 if __name__ == "__main__":
-    # 0) Load data
+    # 1) load data
     df = pd.read_parquet(DATA_FILE)
-    df = ensure_ohlc(df).copy()
+    df = ensure_ohlc(df)
     print(f"✅ Loaded {len(df):,} rows | {df.index.min()} → {df.index.max()}")
 
-    # 1) Extract features (giống Stage 3)
+    # 2) features (nhanh)
     print("⏳ Extracting tsfresh features...")
     X, sample_idx = extract_tsfresh_features(df["close"], LOOKBACK_N, STRIDE, N_JOBS)
     print(f"✅ Features ready: {X.shape}")
 
-    # 2) Chạy grid fusion × stop
-    results = []
-    for fmode in FUSION_MODES:
-        for scfg in STOP_MODES:
-            print(f"\n>>> Running fusion='{fmode}' | stop='{scfg['name']}' ...")
-            res = run_one_config(df, X, sample_idx, fmode, scfg)
-            results.append(res)
-            # in tóm tắt
-            print(
-                f"Trades={res['Total Trades']:.0f} | Win%={res['Win Rate [%]']:.2f} | "
-                f"PF={res['Profit Factor']:.2f} | Ret%={res['Total Return [%]']:.2f} | "
-                f"DD%={res['Max Drawdown [%]']:.2f} | Exp={res['Expectancy (pips)']:.2f} pips "
-                f"({res['Expectancy (USD_1lot)']:.2f} USD)"
-            )
+    # 3) prepare base df for backtest alignment
+    df_bt = df.iloc[sample_idx].copy()
+    df_bt = attach_session(df_bt)
 
-    # 3) Save tổng hợp
-    res_df = pd.DataFrame(results)
-    out_csv = os.path.join(LOG_DIR, "stage4_results.csv")
-    res_df.to_csv(out_csv, index=False)
-    print(f"\n✅ Saved grid results → {out_csv}")
+    lines = []
+    for cfg in CONFIGS:
+        fusion = cfg["fusion"]
+        stop   = cfg["stop"]
+        params = cfg["params"]
 
-    # In top theo PF và theo Return
-    def top_print(df_, key, k=5):
-        print(f"\nTop {k} by {key}:")
-        print(df_.sort_values(key, ascending=False).head(k).to_string(index=False))
+        print(f"\n>>> Running Analyzer for fusion='{fusion}' | stop='{stop}' ...")
+        # predict all three target models
+        preds_hard, probs_soft = load_models_and_predict(X)
+        # fusion signal
+        sig = fusion_signal(preds_hard, probs_soft, mode=fusion)
+        df_bt["signal"] = sig.values
 
-    top_print(res_df, "Profit Factor", k=5)
-    top_print(res_df, "Total Return [%]", k=5)
-    top_print(res_df, "Win Rate [%]", k=5)
-    top_print(res_df, "Expectancy (USD_1lot)", k=5)
+        # entries/exits theo quy ước 0=SELL,1=TIMEOUT,2=BUY
+        entries = (df_bt["signal"] == 2)
+        exits   = (df_bt["signal"] == 0)
+
+        # dynamic stops
+        tp_series, sl_series = stops_by_mode(df_bt, stop, params)
+
+        # backtest & stats
+        pf, stats, trades = backtest(df_bt, entries, exits, tp_series, sl_series, fees=0.0)
+        overall = pf_from_trades(trades)
+
+        # Session breakdown
+        sess_stats = by_session(trades, df_bt)
+
+        # Monthly breakdown
+        month_df = by_month(trades, df_bt)
+
+        # ---- print summary ----
+        head = f"[{fusion.upper()} + {stop.upper()}]"
+        print(head)
+        print(f"Overall: Trades={overall['trades']} | Win%={overall['win_rate']:.2f} | PF={overall['pf']:.2f} | Exp={overall['exp_pips']:.2f} pips (${overall['exp_usd']:.2f})")
+
+        for s in ["Asia","London","NewYork"]:
+            if s in sess_stats:
+                ss = sess_stats[s]
+                print(f"  {s:<7}: Trades={ss['trades']:>4} | Win%={ss['win_rate']:.2f} | PF={ss['pf']:.2f} | Exp={ss['exp_pips']:.2f} pips (${ss['exp_usd']:.2f})")
+
+        if len(month_df):
+            # top 3 best & worst by PF
+            md = month_df.copy()
+            md["pf"] = md["pf"].replace(np.inf, np.nan)
+            best = md.sort_values("pf", ascending=False).head(3).fillna(0)
+            worst = md.sort_values("pf", ascending=True).head(3).fillna(0)
+            print("  Top months by PF:")
+            for _,r in best.iterrows():
+                print(f"    {r['month']}: Trades={int(r['trades'])} | Win%={r['win_rate']:.2f} | PF={r['pf']:.2f} | Exp={r['exp_pips']:.2f} pips")
+            print("  Worst months by PF:")
+            for _,r in worst.iterrows():
+                print(f"    {r['month']}: Trades={int(r['trades'])} | Win%={r['win_rate']:.2f} | PF={r['pf']:.2f} | Exp={r['exp_pips']:.2f} pips")
+
+        # ---- collect for saving ----
+        lines.append(f"{head}\nOverall: {overall}\nSessions: {sess_stats}\nMonthly:\n{month_df.to_string(index=False) if len(month_df) else '(no trades)'}\n")
+
+    # 4) save report
+    out_txt = os.path.join(LOG_DIR, "stage3_1_summary.txt")
+    with open(out_txt, "w") as f:
+        f.write("\n\n".join(lines))
+    print(f"\n✅ Saved analyzer report → {out_txt}")
