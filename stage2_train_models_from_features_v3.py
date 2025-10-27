@@ -27,6 +27,12 @@ TARGETS = {
 print(f"⏳ Loading features from {FEATURE_FILE} ...")
 df = pd.read_csv(FEATURE_FILE)
 print(f"✅ Loaded {df.shape[0]:,} rows × {df.shape[1]:,} cols")
+df.columns = (
+    df.columns
+    .str.replace('[^A-Za-z0-9_]+', '_', regex=True)  # chỉ giữ chữ, số, dấu gạch dưới
+    .str.strip('_')                                  # bỏ ký tự thừa ở đầu/cuối
+)
+print(f"✅ Cleaned feature names (example): {df.columns[:5].tolist()}")
 
 # X = features (loại bỏ target cols)
 feature_cols = [c for c in df.columns if not c.startswith("target_")]
