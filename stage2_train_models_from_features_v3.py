@@ -1,103 +1,102 @@
 # ============================================================
-# STAGE 2.1 — Train LightGBM models from extracted features
+# STAGE 2 (v3.1 fixed for Toan) — Extract tsfresh features
 # ------------------------------------------------------------
-# Input : logs/stage2_features.csv (from stage2_extract_features_v3.py)
-# Output: logs/T*_lightgbm.txt + logs/T*_features.csv
+# Input : data/GBP_USD_M5_2024.parquet (DateTime index)
+# Output: logs/stage2_features.csv
 # ============================================================
 
 import pandas as pd
 import numpy as np
-import lightgbm as lgb
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score, f1_score
+from tsfresh import extract_features
+from tsfresh.feature_extraction import MinimalFCParameters
 import os
 
 # ---------------- CONFIG ----------------
-FEATURE_FILE = "logs/stage2_features.csv"
-OUT_DIR = "logs"
-os.makedirs(OUT_DIR, exist_ok=True)
+PAIR = "GBP_USD"
+DATA_FILE = f"data/{PAIR}_M5_2024.parquet"
+OUT_FILE = "logs/stage2_features.csv"
 
-TARGETS = {
-    "T1_10x40": "target_10x40",
-    "T2_15x60": "target_15x60",
-    "T3_20x80": "target_20x80"
-}
+WINDOW = 200      # số nến
+STRIDE = 5        # mỗi 5 nến sample 1 lần
+TP_PIPS = [10, 15, 20]
+N_AHEAD = [40, 60, 80]
+PIP_SIZE = 0.0001
+
+os.makedirs("logs", exist_ok=True)
 
 # ---------------- LOAD DATA ----------------
-print(f"⏳ Loading features from {FEATURE_FILE} ...")
-df = pd.read_csv(FEATURE_FILE)
-print(f"✅ Loaded {df.shape[0]:,} rows × {df.shape[1]:,} cols")
+print(f"⏳ Loading price data {DATA_FILE} ...")
+df = pd.read_parquet(DATA_FILE)
 
-# Loại bỏ cột target để lấy feature matrix
-feature_cols = [c for c in df.columns if not c.startswith("target_")]
-X = df[feature_cols]
+# Nếu index là datetime thì reset thành cột time
+if not isinstance(df.index, pd.DatetimeIndex):
+    raise ValueError("❌ Index phải là DatetimeIndex (datetime).")
+df = df.reset_index().rename(columns={"index": "time"})
 
-# ---------------- TRAIN FUNCTION ----------------
-def train_model(df, target_col, name):
-    print(f"\n========== TRAIN {name} ==========")
-    X = df[feature_cols]
-    y = df[target_col]
+# Nếu chỉ có 'close', tự tạo open/high/low ảo cho tsfresh (± small noise)
+if "open" not in df.columns:
+    df["open"] = df["close"].shift(1).fillna(df["close"])
+if "high" not in df.columns:
+    df["high"] = df["close"] + np.random.uniform(0, 0.0005, len(df))
+if "low" not in df.columns:
+    df["low"] = df["close"] - np.random.uniform(0, 0.0005, len(df))
+if "volume" not in df.columns:
+    df["volume"] = 1.0
 
-    # Chia train/test
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, shuffle=False
-    )
+df = df.dropna().reset_index(drop=True)
+print(f"✅ Loaded {len(df):,} rows | Columns: {list(df.columns)}")
 
-    # LightGBM params
-    params = {
-        "objective": "multiclass",
-        "num_class": 3,
-        "learning_rate": 0.05,
-        "num_leaves": 31,
-        "max_depth": -1,
-        "min_data_in_leaf": 30,
-        "feature_fraction": 0.9,
-        "bagging_fraction": 0.9,
-        "bagging_freq": 5,
-        "verbose": -1,
-        "n_jobs": 16
-    }
+# ---------------- TARGET CREATION ----------------
+def create_targets(df, tp_pips, n_ahead):
+    tp = tp_pips * PIP_SIZE
+    labels = []
+    for i in range(len(df) - n_ahead):
+        future = df["close"].iloc[i + 1 : i + n_ahead + 1]
+        ret = (future.values - df["close"].iloc[i]) / PIP_SIZE
+        hit_tp = np.any(ret >= tp_pips)
+        hit_sl = np.any(ret <= -tp_pips)
+        if hit_tp and not hit_sl:
+            labels.append(2)
+        elif hit_sl and not hit_tp:
+            labels.append(0)
+        else:
+            labels.append(1)
+    labels += [1] * n_ahead
+    return pd.Series(labels, index=df.index, name=f"target_{tp_pips}x{n_ahead}")
 
-    train_set = lgb.Dataset(X_train, label=y_train)
-    valid_set = lgb.Dataset(X_test, label=y_test, reference=train_set)
+for tp, na in zip(TP_PIPS, N_AHEAD):
+    df[f"target_{tp}x{na}"] = create_targets(df, tp, na)
 
-    model = lgb.train(
-        params,
-        train_set,
-        valid_sets=[train_set, valid_set],
-        num_boost_round=500,
-        early_stopping_rounds=50,
-        verbose_eval=100
-    )
+print("✅ Targets created:", [c for c in df.columns if "target_" in c])
 
-    # ---------------- EVALUATE ----------------
-    y_pred = model.predict(X_test)
-    y_pred_class = np.argmax(y_pred, axis=1)
+# ---------------- TSFRESH FEATURES ----------------
+features = []
+ids, close_all, high_all, low_all, vol_all = [], [], [], [], []
+for i in range(0, len(df) - WINDOW, STRIDE):
+    win = df.iloc[i : i + WINDOW]
+    ids.extend([i] * len(win))
+    close_all.extend(win["close"])
+    high_all.extend(win["high"])
+    low_all.extend(win["low"])
+    vol_all.extend(win["volume"])
 
-    acc = accuracy_score(y_test, y_pred_class)
-    f1 = f1_score(y_test, y_pred_class, average="macro")
-    print(f"[{name}] Accuracy={acc:.4f} | F1={f1:.4f}")
-    print(classification_report(y_test, y_pred_class, digits=3))
+long_df = pd.DataFrame({
+    "id": ids,
+    "close": close_all,
+    "high": high_all,
+    "low": low_all,
+    "volume": vol_all,
+})
 
-    # ---------------- FEATURE IMPORTANCE ----------------
-    imp = pd.DataFrame({
-        "feature": model.feature_name(),
-        "importance": model.feature_importance()
-    }).sort_values("importance", ascending=False)
+print("⏳ Extracting tsfresh features (MinimalFCParameters)...")
+settings = MinimalFCParameters()
+X = extract_features(long_df, column_id="id", default_fc_parameters=settings, n_jobs=16)
+X = X.replace([np.inf, -np.inf], np.nan).fillna(0)
+print(f"✅ Features extracted: {X.shape}")
 
-    model_path = f"{OUT_DIR}/{name}_lightgbm.txt"
-    imp_path = f"{OUT_DIR}/{name}_features.csv"
+valid_idx = np.arange(0, len(df) - WINDOW, STRIDE)
+targets = df.iloc[WINDOW::STRIDE][["target_10x40", "target_15x60", "target_20x80"]].reset_index(drop=True)
+final_df = pd.concat([X.reset_index(drop=True), targets.reset_index(drop=True)], axis=1)
 
-    model.save_model(model_path)
-    imp.to_csv(imp_path, index=False)
-    print(f"✅ Model saved → {model_path}")
-    print(f"✅ Feature importance → {imp_path}")
-
-    return model, imp
-
-# ---------------- TRAIN ALL TARGETS ----------------
-models = {}
-for name, col in TARGETS.items():
-    models[name], _ = train_model(df, col, name)
-
-print("\n✅ DONE. All models trained successfully and saved.")
+final_df.to_csv(OUT_FILE, index=False)
+print(f"✅ Saved features → {OUT_FILE} ({final_df.shape[0]:,} rows, {final_df.shape[1]:,} cols)")
