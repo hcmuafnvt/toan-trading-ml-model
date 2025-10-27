@@ -20,7 +20,7 @@ warnings.filterwarnings("ignore")
 
 # ========= CONFIG =========
 PAIR = "GBP_USD"
-FILE = f"{PAIR}_M5_2024.parquet"
+FILE = f"data/{PAIR}_M5_2024.parquet"
 PIP_SIZE = 0.0001
 LOOKBACK_N = 240
 STRIDE = 10
@@ -28,9 +28,9 @@ FC_PARAMS = EfficientFCParameters()
 N_JOBS = 28
 
 MODELS = {
-    "logs/T1_10x40": "T1_10x40_lightgbm.txt",
-    "logs/T2_15x60": "T2_15x60_lightgbm.txt",
-    "logs/T3_20x80": "T3_20x80_lightgbm.txt",
+    "T1_10x40": "logs/T1_10x40_lightgbm.txt",
+    "T2_15x60": "logs/T2_15x60_lightgbm.txt",
+    "T3_20x80": "logs/T3_20x80_lightgbm.txt",
 }
 
 # ========= LOAD PRICE =========
