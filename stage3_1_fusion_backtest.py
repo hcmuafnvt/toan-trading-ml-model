@@ -83,10 +83,11 @@ def expectancy_from_trades(trades_rec, pip_size=PIP_SIZE) -> float:
 
 
 def atr_from_ta(df: pd.DataFrame, window: int = 14) -> pd.Series:
-    """Dùng ATR của thư viện ta, đảm bảo không lỗi index."""
-    tmp = df[["high", "low", "close"]].reset_index(drop=True)
+    """Dùng ATR của thư viện ta, đảm bảo không lỗi duplicate index."""
+    tmp = df[["high", "low", "close"]].copy()
+    tmp = tmp.reset_index(drop=True)  # bỏ DatetimeIndex để tránh align bug
     atr = AverageTrueRange(tmp["high"], tmp["low"], tmp["close"], window=window).average_true_range()
-    atr.index = df.index  # restore index
+    atr.index = df.index  # trả lại index gốc
     return atr.ffill().bfill()
 
 
