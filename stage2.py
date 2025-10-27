@@ -1,16 +1,14 @@
 """
-STAGE 2 — FULL OPTIMIZED FOR EC2
---------------------------------
-Feature extraction & training pipeline using tsfresh + LightGBM
-✅ Tận dụng tối đa 32 vCPU / 249 GB RAM
-✅ BUY=+1 | SELL=-1 | TIMEOUT=0
-✅ Session-aware TP/SL (+5 pips London & NY)
+STAGE 2 — Full Optimized for EC2 (save feature CSV)
+---------------------------------------------------
 ✅ EfficientFCParameters (~800 feature)
-✅ Text-only summary output (no charts)
-✅ Clean feature names to avoid JSON error
+✅ 16 core / 32 thread Xeon Platinum → n_jobs=28
+✅ BUY=+1 | SELL=-1 | TIMEOUT=0
+✅ Session bonus +5 pips (London/NY)
+✅ Save LightGBM model (.txt) + feature list (.csv)
+✅ Text-only summary
 """
 
-# ========== IMPORTS ==========
 import pandas as pd
 import numpy as np
 import re
@@ -24,14 +22,14 @@ from lightgbm import LGBMClassifier
 from sklearn.metrics import classification_report
 
 # ========== CONFIG ==========
-FILE = "data/GBP_USD_M5_2024.parquet"
+FILE = "GBP_USD_M5_2024.parquet"
 PIP = 0.0001
 SESSION_BONUS = 5
 RR = 1.0
-LOOKBACK_N = 240           # ~20h dữ liệu M5
-STRIDE = 10                # lấy mỗi 10 nến (≈50 phút)
+LOOKBACK_N = 240
+STRIDE = 10
 FC_PARAMS = EfficientFCParameters()
-N_JOBS = 28                # sử dụng 30/32 core
+N_JOBS = 28
 
 TARGETS = {
     "T1_10x40": {"tp": 10, "ahead": 40},
@@ -39,9 +37,8 @@ TARGETS = {
     "T3_20x80": {"tp": 20, "ahead": 80},
 }
 
-# ========== LOAD DATA ==========
+# ========== LOAD ==========
 df = pd.read_parquet(FILE)
-# Chuẩn hoá cột
 for base in ["mid_", "bid_", "ask_"]:
     if "close" not in df and f"{base}c" in df.columns:
         df["close"] = df[f"{base}c"]
@@ -60,7 +57,7 @@ df["session"] = df["hour"].map(detect_session)
 
 print(f"✅ Loaded {len(df):,} rows | {df.index.min()} → {df.index.max()}")
 
-# ========== LABELING ==========
+# ========== LABEL ==========
 def label_buy_sell(df, tp_pips=10, ahead=20, rr=1.0, pip=0.0001, bonus=0):
     n = len(df)
     res = np.zeros(n, dtype=np.int8)
@@ -86,7 +83,7 @@ for name, cfg in TARGETS.items():
     df[name] = label_buy_sell(df, tp_pips=cfg["tp"], ahead=cfg["ahead"], rr=RR, pip=PIP, bonus=SESSION_BONUS)
     print(f"Label {name}: {pd.Series(df[name]).value_counts().to_dict()}")
 
-# ========== BUILD ROLLING WINDOWS ==========
+# ========== BUILD LONG ==========
 def build_long(series, window, stride):
     vals, n = series.values, len(series)
     ids, times, values, idxs = [], [], [], []
@@ -105,7 +102,7 @@ def build_long(series, window, stride):
     })
     return long_df, np.array(idxs, dtype=int)
 
-print("⏳ Extracting tsfresh features (multi-core mode)...")
+print("⏳ Extracting tsfresh features...")
 long_df, sample_idx = build_long(df["close"], LOOKBACK_N, STRIDE)
 X = extract_features(
     long_df,
@@ -118,9 +115,9 @@ X = extract_features(
 )
 impute(X)
 X = X.replace([np.inf, -np.inf], np.nan).dropna(axis=1)
-print(f"✅ Features extracted: {X.shape[0]} samples × {X.shape[1]} features")
+print(f"✅ Features extracted: {X.shape}")
 
-# ========== UTILS ==========
+# ========== CLEAN COLUMN NAMES ==========
 def clean_feature_names(df):
     df = df.copy()
     df.columns = [re.sub(r'[^0-9a-zA-Z_]+', '_', c) for c in df.columns]
@@ -133,6 +130,10 @@ def train_eval(X, y, name):
     X_sell = select_features(X, (y_num==0).astype(int))
     cols_union = sorted(set(X_buy.columns).union(set(X_sell.columns)))
     X_sel = clean_feature_names(X[cols_union])
+
+    # 💾 save feature names for inference
+    pd.Series(X_sel.columns).to_csv(f"logs/{name}_features.csv", index=False)
+
     n = len(X_sel); split = int(n*0.8)
     X_train, X_test = X_sel.iloc[:split], X_sel.iloc[split:]
     y_train, y_test = y_num[:split], y_num[split:]
@@ -145,31 +146,31 @@ def train_eval(X, y, name):
         subsample=0.8,
         colsample_bytree=0.8,
         max_depth=-1,
-        n_jobs=30,
+        n_jobs=N_JOBS,
         random_state=42
     )
     clf.fit(X_train, y_train)
     y_pred = clf.predict(X_test)
 
-    print(f"\n[{name}] Classification report (0=SELL,1=TIMEOUT,2=BUY)")
+    print(f"\n[{name}] report (0=SELL,1=TIMEOUT,2=BUY)")
     print(classification_report(y_test, y_pred, digits=3))
 
     imp = pd.Series(clf.feature_importances_, index=X_sel.columns)
     top5 = imp.sort_values(ascending=False).head(5)
-    print(f"[{name}] Top-5 features:")
+    print(f"[{name}] top 5 features:")
     for k, v in top5.items():
-        print(f"  {k} : {v}")
+        print(f"  {k}: {v}")
 
-    # Optionally save model
-    clf.booster_.save_model(f"{name}_lightgbm.txt")
-    print(f"[{name}] model saved → {name}_lightgbm.txt")
+    # 💾 save model
+    clf.booster_.save_model(f"logs/{name}_lightgbm.txt")
+    print(f"[{name}] model + feature list saved ({len(cols_union)} features)")
 
 def get_labels(col):
     return df[col].values[sample_idx]
 
-# ========== RUN PIPELINE ==========
+# ========== RUN ==========
 for name in TARGETS.keys():
     y = get_labels(name)
     train_eval(X, y, name)
 
-print("\n✅ DONE — EC2 full-optimized text summary.")
+print("\n✅ DONE — EC2 full optimized + saved feature lists.")
