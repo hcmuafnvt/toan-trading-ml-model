@@ -85,14 +85,17 @@ def label_buy_sell(df, tp_pips=10, ahead=20, rr=1.0, pip=0.0001, bonus=0):
             sell_touch = hit_tp_down[0]
 
         if buy_touch == np.inf and sell_touch == np.inf:
-            res[i] = 0
-        elif buy_touch < sell_touch:
             res[i] = 1
+        elif buy_touch < sell_touch:
+            res[i] = 2
         elif sell_touch < buy_touch:
-            res[i] = -1
-        else:
             res[i] = 0
-
+        else:
+            res[i] = 1
+            
+        if i == n - ahead - 1:
+            print("Unique labels generated:", np.unique(res))
+    
     return res
 
 # ========== GRID SEARCH ==========
