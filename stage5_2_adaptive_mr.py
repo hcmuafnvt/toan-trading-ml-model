@@ -158,16 +158,17 @@ timeout_mask = ml.eq(1)
 dist_atr = (close - ma).abs() / atr.replace(0, np.nan)
 dist_ok = dist_atr.between(DIST_ATR_MIN, DIST_ATR_MAX)
 
-# ---- cross-back entries ----
-below_band_prev = close.shift(1) < lower.shift(1)
-above_band_prev = close.shift(1) > upper.shift(1)
-back_inside_up  = (close >= lower) & below_band_prev
-back_inside_dn  = (close <= upper) & above_band_prev
+# medium: chạm band HOẶC cross-back
+touch_lo_prev = close.shift(1) <= lower.shift(1)
+touch_up_prev = close.shift(1) >= upper.shift(1)
+back_inside_up = (close <= lower) | ((close >= lower) & touch_lo_prev)
+back_inside_dn = (close >= upper) | ((close <= upper) & touch_up_prev)
 
 tight_bw = bw.lt(bw_thr)
 
 long_mr  = back_inside_up  & (rsi < RSI_LOW)  & timeout_mask & regime_low & tight_bw & dist_ok & session_ok
 short_mr = back_inside_dn  & (rsi > RSI_HIGH) & timeout_mask & regime_low & tight_bw & dist_ok & session_ok
+print(f"MR candidates (after filters): long={int(long_mr.sum())}, short={int(short_mr.sum())}, timeout={int(timeout_mask.sum())}")
 
 # cooldown: không mở MR mới trong COOLDOWN_BARS sau một entry
 def apply_cooldown(sig: pd.Series, bars: int) -> pd.Series:
