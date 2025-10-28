@@ -71,19 +71,21 @@ pf = vbt.Portfolio.from_signals(
 stats = pf.stats()
 trades = pf.trades.records_readable
 
-# --- Extract trade records safely ---
+# --- Extract trade records safely (handle both old/new vectorbt schemas) ---
 cols = [c.lower() for c in trades.columns]
 colmap = {c.lower(): c for c in trades.columns}
 
-def get_col(name):
-    return trades[colmap[name]].values if name in colmap else None
+def get_col(*names):
+    for n in names:
+        if n.lower() in colmap:
+            return trades[colmap[n.lower()]].values
+    return None
 
-entry = get_col("entry_price")
-exitp = get_col("exit_price")
+entry = get_col("entry_price", "avg entry price")
+exitp = get_col("exit_price", "avg exit price")
 
 if entry is None or exitp is None:
-    print("⚠️ Warning: entry_price / exit_price columns not found in trades:")
-    print("Columns available:", trades.columns.tolist())
+    print("⚠️ entry_price / exit_price columns not found, skipping pips calc")
     entry = np.zeros(len(trades))
     exitp = np.zeros(len(trades))
 
@@ -97,7 +99,6 @@ else:
     else:
         sign = np.where(direction == 0, 1.0, -1.0)
 
-# đảm bảo cùng kích thước
 min_len = min(len(entry), len(exitp), len(sign))
 entry, exitp, sign = entry[:min_len], exitp[:min_len], sign[:min_len]
 
