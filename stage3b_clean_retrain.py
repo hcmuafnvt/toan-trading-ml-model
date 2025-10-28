@@ -42,6 +42,8 @@ os.makedirs("logs", exist_ok=True)
 print("⏳ Loading data ...")
 X = pd.read_csv(FEATURE_FILE)
 y = pd.read_csv(Y_FILE)["y"]
+# Map label -1,0,1 → 0,1,2  (LightGBM yêu cầu non-negative labels)
+y = y.map({-1: 0, 0: 1, 1: 2}).astype(int)
 
 selected = [
     line.strip()
@@ -112,18 +114,14 @@ imp.to_csv(OUT_IMP, index=False)
 print(f"✅ Feature importance saved → {OUT_IMP}")
 
 # ================= VALIDATION METRICS =================
-# LightGBM multiclass → output shape = [n_samples, 3]
+# Dự đoán & đánh giá
 preds_prob = model.predict(X_valid)
 preds = np.argmax(preds_prob, axis=1)
 
-# Chuẩn hoá y thành [0,1,2] tương ứng [-1,0,1]
-from sklearn.preprocessing import LabelEncoder
-enc = LabelEncoder()
-y_valid_enc = enc.fit_transform(y_valid)
-
-acc = accuracy_score(y_valid_enc, preds)
-f1 = f1_score(y_valid_enc, preds, average="macro")
-report = classification_report(y_valid_enc, preds, digits=4)
+from sklearn.metrics import accuracy_score, f1_score, classification_report
+acc = accuracy_score(y_valid, preds)
+f1 = f1_score(y_valid, preds, average="macro")
+report = classification_report(y_valid, preds, digits=4)
 
 print(f"\n✅ Validation ACC={acc:.4f} | F1={f1:.4f}")
 print(report)
