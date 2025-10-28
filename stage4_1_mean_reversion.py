@@ -69,8 +69,27 @@ pf = vbt.Portfolio.from_signals(
 
 stats = pf.stats()
 trades = pf.trades.records_readable
-pips = (trades["Exit Price"] - trades["Entry Price"]) * \
-       np.where(trades["Direction"]=="Long",1,-1) / PIP_SIZE
+
+# compatible across versions
+if "exit_price" in trades.columns and "entry_price" in trades.columns:
+    entry = trades["entry_price"].values
+    exitp = trades["exit_price"].values
+else:
+    entry = trades["Entry Price"].values
+    exitp = trades["Exit Price"].values
+
+# direction có thể là 0/1 hoặc 'Long'/'Short'
+if "direction" in trades.columns:
+    direction = trades["direction"].values
+    sign = np.where(direction == 0, 1.0, -1.0)  # 0=long,1=short
+elif "Direction" in trades.columns:
+    direction = trades["Direction"].values
+    sign = np.where(direction == "Long", 1.0, -1.0)
+else:
+    sign = np.ones_like(entry)
+
+pips = (exitp - entry) * sign / PIP_SIZE
+
 expect_pip = float(np.mean(pips))
 expect_usd = expect_pip * PIP_USD
 pf_ratio = stats["Profit Factor"]
