@@ -86,7 +86,8 @@ exitp = trades[colmap["exit_price"]].values if col_exists("exit_price") else np.
 if col_exists("direction"):
     direction = trades[colmap["direction"]].values
     if trades[colmap["direction"]].dtype == object:
-        sign = np.where(direction.astype(str).str.lower().str.contains("long"), 1.0, -1.0)
+        direction_series = pd.Series(direction.astype(str))
+        sign = np.where(direction_series.str.lower().str.contains("long"), 1.0, -1.0)
     else:
         sign = np.where(direction == 0, 1.0, -1.0)
 else:
