@@ -45,9 +45,9 @@ class CONFIG:
 
     # Stage 3 model files (LightGBM text model, trained với tên feature đã sanitized)
     MODEL_PATHS: List[str] = (
-        "T1_10x40_lightgbm.txt",
-        "T2_15x60_lightgbm.txt",
-        "T3_20x80_lightgbm.txt",
+        "logs/T1_10x40_lightgbm.txt",
+        "logs/T2_15x60_lightgbm.txt",
+        "logs/T3_20x80_lightgbm.txt",
     )
 
     # Outputs (per pipeline)
