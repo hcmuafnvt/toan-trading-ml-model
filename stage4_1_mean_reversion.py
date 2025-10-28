@@ -70,21 +70,25 @@ pf = vbt.Portfolio.from_signals(
 stats = pf.stats()
 trades = pf.trades.records_readable
 
-# compatible across versions
-if "exit_price" in trades.columns and "entry_price" in trades.columns:
-    entry = trades["entry_price"].values
-    exitp = trades["exit_price"].values
-else:
-    entry = trades["Entry Price"].values
-    exitp = trades["Exit Price"].values
+# --- Extract trade records safely (compatible across vectorbt versions) ---
+cols = [c.lower() for c in trades.columns]
 
-# direction có thể là 0/1 hoặc 'Long'/'Short'
-if "direction" in trades.columns:
-    direction = trades["direction"].values
-    sign = np.where(direction == 0, 1.0, -1.0)  # 0=long,1=short
-elif "Direction" in trades.columns:
-    direction = trades["Direction"].values
-    sign = np.where(direction == "Long", 1.0, -1.0)
+def col_exists(name):
+    return name in cols
+
+# map cột lowercase về đúng cột thực tế
+colmap = {c.lower(): c for c in trades.columns}
+
+entry = trades[colmap["entry_price"]].values if col_exists("entry_price") else np.zeros(0)
+exitp = trades[colmap["exit_price"]].values if col_exists("exit_price") else np.zeros(0)
+
+# direction: có thể là 0/1, 'Long'/'Short', hoặc numeric
+if col_exists("direction"):
+    direction = trades[colmap["direction"]].values
+    if trades[colmap["direction"]].dtype == object:
+        sign = np.where(direction.astype(str).str.lower().str.contains("long"), 1.0, -1.0)
+    else:
+        sign = np.where(direction == 0, 1.0, -1.0)
 else:
     sign = np.ones_like(entry)
 
