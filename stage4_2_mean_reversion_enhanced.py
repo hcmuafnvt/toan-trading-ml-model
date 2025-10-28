@@ -29,11 +29,11 @@ FEES = 0.0
 BB_WINDOW = 30
 BB_NSTD = 1.6
 RSI_WINDOW = 14
-RSI_LOW, RSI_HIGH = 35, 65
+RSI_LOW, RSI_HIGH = 40, 60
 
 # ATR regime filter
 ATR_WINDOW = 14
-LOW_Q = 0.33  # bottom 33% = Low volatility regime
+LOW_Q = 0.5  # bottom 50% = Low volatility regime
 
 # TP/SL grid (ATR-based)
 RR_GRID = [
@@ -118,8 +118,8 @@ if __name__ == "__main__":
     low_regime = atr < atr_q
 
     # --- Entry rules ---
-    long_entry = (close < lo) & (rsi < RSI_LOW) & timeout_mask & low_regime
-    short_entry = (close > up) & (rsi > RSI_HIGH) & timeout_mask & low_regime
+    long_entry = ((close < lo) | (rsi < RSI_LOW)) & timeout_mask & low_regime
+    short_entry = ((close > up) | (rsi > RSI_HIGH)) & timeout_mask & low_regime
     exit_sig = ((close >= sma) | (close <= sma)).fillna(False)
 
     print("✅ Entries generated:")
