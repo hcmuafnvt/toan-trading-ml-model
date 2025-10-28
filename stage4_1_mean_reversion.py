@@ -167,7 +167,7 @@ def profit_usd_from_trades(trades: pd.DataFrame) -> float:
 if __name__ == "__main__":
     print("⏳ Loading data...")
     price = load_price(DATA_FILE)
-    close = price["close"]
+    close = price["close"].squeeze()  # đảm bảo là Series, không phải DataFrame    
 
     # Load final fusion signal (stage 4)
     signal = pd.read_csv(FINAL_SIGNAL_FILE, index_col=0, parse_dates=True)
