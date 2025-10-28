@@ -365,6 +365,8 @@ if __name__ == "__main__":
             # chọn top-k features
             imp = pd.Series(clf.feature_importances_, index=X.columns).sort_values(ascending=False)
             top_cols = imp.head(min(TOPK_FEATURES, len(imp))).index.tolist()
+            # Lưu top_cols theo đúng thứ tự gốc trong X
+            top_cols = [c for c in X.columns if c in top_cols]
             return clf, top_cols
 
         # top-k theo từng model (tách cột)
@@ -377,12 +379,20 @@ if __name__ == "__main__":
 
         # 5.2 Predict train-fold để optimize fusion+stop theo (session×regime)
         def predict_stack(model, cols, X_train, X_test):
-            Xtr = X_train[cols]
-            Xte = X_test[cols]
-            p_tr = model.predict_proba(Xtr)
+            # Chỉ dùng đúng top feature columns đã train
+            Xtr = X_train[cols].copy()
+            Xte = X_test[cols].copy()
+
+            # Đảm bảo cùng số cột
+            assert Xtr.shape[1] == len(cols) and Xte.shape[1] == len(cols), \
+                f"Mismatch feature count: train={Xtr.shape}, test={Xte.shape}"
+
+            p_tr = model.predict_proba(Xtr, num_iteration=model.best_iteration_)
             y_tr = p_tr.argmax(axis=1)
-            p_te = model.predict_proba(Xte)
+
+            p_te = model.predict_proba(Xte, num_iteration=model.best_iteration_)
             y_te = p_te.argmax(axis=1)
+
             return (y_tr, p_tr), (y_te, p_te)
 
         (y1_tr, p1_tr), (y1_te, p1_te) = predict_stack(m1, cols1, X_all.iloc[tr_idx], X_all.iloc[te_idx])
