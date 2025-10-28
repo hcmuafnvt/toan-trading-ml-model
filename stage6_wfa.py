@@ -240,7 +240,10 @@ if __name__ == "__main__":
                 X_tr_in, y_tr_in,
                 eval_set=[(X_val, y_val)],
                 eval_metric="multi_logloss",
-                verbose=False
+                callbacks=[
+                    lgb.early_stopping(30),
+                    lgb.log_evaluation(50)
+                ]
             )
 
             # predict xác suất trên test
