@@ -64,34 +64,42 @@ pf = vbt.Portfolio.from_signals(
     short_exits=df["exit"],
     size=1.0,
     fees=0.0,
-    direction="both"
+    direction="both",
+    freq="5min"
 )
 
 stats = pf.stats()
 trades = pf.trades.records_readable
 
-# --- Extract trade records safely (compatible across vectorbt versions) ---
+# --- Extract trade records safely ---
 cols = [c.lower() for c in trades.columns]
-
-def col_exists(name):
-    return name in cols
-
-# map cột lowercase về đúng cột thực tế
 colmap = {c.lower(): c for c in trades.columns}
 
-entry = trades[colmap["entry_price"]].values if col_exists("entry_price") else np.zeros(0)
-exitp = trades[colmap["exit_price"]].values if col_exists("exit_price") else np.zeros(0)
+def get_col(name):
+    return trades[colmap[name]].values if name in colmap else None
 
-# direction: có thể là 0/1, 'Long'/'Short', hoặc numeric
-if col_exists("direction"):
-    direction = trades[colmap["direction"]].values
+entry = get_col("entry_price")
+exitp = get_col("exit_price")
+
+if entry is None or exitp is None:
+    print("⚠️ Warning: entry_price / exit_price columns not found in trades:")
+    print("Columns available:", trades.columns.tolist())
+    entry = np.zeros(len(trades))
+    exitp = np.zeros(len(trades))
+
+direction = get_col("direction")
+if direction is None:
+    sign = np.ones(len(entry))
+else:
     if trades[colmap["direction"]].dtype == object:
         direction_series = pd.Series(direction.astype(str))
         sign = np.where(direction_series.str.lower().str.contains("long"), 1.0, -1.0)
     else:
         sign = np.where(direction == 0, 1.0, -1.0)
-else:
-    sign = np.ones_like(entry)
+
+# đảm bảo cùng kích thước
+min_len = min(len(entry), len(exitp), len(sign))
+entry, exitp, sign = entry[:min_len], exitp[:min_len], sign[:min_len]
 
 pips = (exitp - entry) * sign / PIP_SIZE
 
