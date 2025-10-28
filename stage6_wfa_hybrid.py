@@ -308,12 +308,18 @@ if __name__ == "__main__":
 
     # 4) Rebuild sample_times để align với price
     sample_idx = np.arange(WINDOW, len(price), STRIDE, dtype=int)
-    # cắt khớp số row features
     sample_idx = sample_idx[:n_samples]
     sample_times = price.index[sample_idx]
-    # dùng sample_times để tạo session/regime tại sample-level
-    sess_samp = pd.Series(session_full.loc[sample_times].values, index=sample_times)
-    reg_samp  = pd.Series(regime_full.loc[sample_times].values, index=sample_times)
+
+    # Đảm bảo session_full và regime_full là Series, không phải Index
+    if not isinstance(session_full, pd.Series):
+        session_full = pd.Series(session_full, index=price.index)
+    if not isinstance(regime_full, pd.Series):
+        regime_full = pd.Series(regime_full, index=price.index)
+
+    # Dùng sample_times để tạo session/regime sample-level
+    sess_samp = session_full.reindex(sample_times)
+    reg_samp  = regime_full.reindex(sample_times)
 
     # 5) Create WFA folds theo sample order
     folds = make_folds(n_samples, N_FOLDS, START_FRAC)
