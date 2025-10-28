@@ -442,5 +442,20 @@ if __name__ == "__main__":
         f.write(f"\nExpectancy (pips): {exp_final_pips:.4f} | Expectancy USD: {exp_final_pips*PIP_USD:.2f} | Total Profit USD: {profit_final_usd:.0f}\n")
 
     print(f"\n✅ Saved grid → {OUT_GRID_CSV}")
+
+    # --- Save best fusion signal for later stages ---
+    try:
+        best_row = grid_df.sort_values("Profit Factor", ascending=False).iloc[0]
+        best_fusion = best_row["fusion_mode"]
+        best_stop   = best_row["stop_mode"]
+
+        # lấy signal tương ứng trong dict đã dùng ở trên
+        best_signal = fusion_series[(best_fusion, best_stop)].copy()
+        best_signal.name = "final_signal"
+        best_signal.to_csv("logs/stage4_final_signal.csv", index=True)
+        print(f"✅ Saved final fusion signal ({best_fusion}+{best_stop}) → logs/stage4_final_signal.csv")
+    except Exception as e:
+        print(f"⚠️ Could not save final fusion signal: {e}")
+
     print(f"✅ Saved best config → {OUT_BEST_JSON}")
     print(f"✅ Saved summary → {OUT_SUMMARY}")
