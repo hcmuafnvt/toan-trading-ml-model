@@ -76,6 +76,7 @@ def load_price(path: str) -> pd.DataFrame:
     return df
 
 def bollinger_bands(close: pd.Series, window=20, nstd=2.0):
+    close = pd.Series(close).astype(float)   # 🔒 luôn ép về 1D Series
     ma = close.rolling(window, min_periods=window).mean()
     sd = close.rolling(window, min_periods=window).std()
     upper = ma + nstd * sd
@@ -167,16 +168,17 @@ def profit_usd_from_trades(trades: pd.DataFrame) -> float:
 if __name__ == "__main__":
     print("⏳ Loading data...")
     price = load_price(DATA_FILE)
-    close = price["close"].squeeze()  # đảm bảo là Series, không phải DataFrame    
+    close = price["close"].squeeze()       # ép thành Series 1D
 
-    # Load final fusion signal (stage 4)
+    # === Load final fusion signal (stage 4)
     signal = pd.read_csv(FINAL_SIGNAL_FILE, index_col=0, parse_dates=True)
     # đồng bộ tz-naive
     signal.index = signal.index.tz_localize(None)
-
     # align theo price
     signal = signal.reindex(price.index, method="ffill").fillna(1).astype(int)
-    timeout_mask = signal.eq(1)
+
+    # === Tạo timeout mask sau khi signal đã load xong
+    timeout_mask = signal.eq(1).squeeze()  # ✅ tạo mask & ép Series 1D
 
     print(f"Timeout samples: {int(timeout_mask.sum())}")
 
@@ -184,22 +186,14 @@ if __name__ == "__main__":
     sma, up, lo = bollinger_bands(close, BB_WINDOW, BB_NSTD)
 
     # Entry:
-    #  - Long  khi close < lower band (quá bán)  & đang timeout
-    #  - Short khi close > upper band (quá mua) & đang timeout
     long_entry  = (close < lo) & timeout_mask
     short_entry = (close > up) & timeout_mask
 
     # Exit khi chạm SMA hoặc sau MAX_BARS
-    # Tạo exit mask: khi giá vượt qua SMA (từ dưới lên cho long, từ trên xuống cho short)
-    cross_up   = (close >= sma)  # đủ đơn giản cho cả 2 hướng, vì có TP/SL kiểm soát RR
+    cross_up   = (close >= sma)
     base_exit  = cross_up.fillna(False)
-
-    # thêm time-based exit sau MAX_BARS: dùng shift/rolling window
-    # Tạo một series "exit after MAX_BARS" bằng cách dịch entries và set True ở điểm MAX_BARS sau entry
     long_exit_time  = long_entry.shift(MAX_BARS, fill_value=False)
     short_exit_time = short_entry.shift(MAX_BARS, fill_value=False)
-
-    # Tổng exit
     exit_sig = (base_exit | long_exit_time | short_exit_time).fillna(False)
 
     print("✅ Entries generated:")
