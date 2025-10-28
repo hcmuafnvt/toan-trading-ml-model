@@ -37,7 +37,16 @@ os.makedirs("logs", exist_ok=True)
 # ========== LOAD ==========
 print("⏳ Loading data ...")
 X = pd.read_csv(FEATURE_FILE)
+
+# --- Load & sanitize target ---
 y = pd.read_csv(Y_FILE)["y"].astype(int)
+
+# Map labels to 0–2 if legacy file still has -1,0,1
+if y.min() < 0:
+    print("⚠️ Detected negative labels — remapping {-1,0,1} → {0,1,2}")
+    y = y.map({-1: 0, 0: 1, 1: 2}).astype(int)
+    
+print("Unique labels:", sorted(y.unique()))
 
 core_feats = [l.strip() for l in open(CORE_TXT) if l.strip() in X.columns]
 if not core_feats:
