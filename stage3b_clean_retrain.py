@@ -66,8 +66,10 @@ print(f"Train={len(X_train):,} | Valid={len(X_valid):,}")
 
 # ================= LIGHTGBM PARAMS =================
 params = dict(
-    objective="binary",             # binary classification
-    metric="binary_logloss",
+    
+    objective="multiclass",
+    metric="multi_logloss",
+    num_class=3,
     boosting_type="gbdt",
     learning_rate=0.05,
     num_leaves=64,
@@ -110,10 +112,18 @@ imp.to_csv(OUT_IMP, index=False)
 print(f"✅ Feature importance saved → {OUT_IMP}")
 
 # ================= VALIDATION METRICS =================
-preds = (model.predict(X_valid) > 0.5).astype(int)
-acc = accuracy_score(y_valid, preds)
-f1 = f1_score(y_valid, preds)
-report = classification_report(y_valid, preds)
+# LightGBM multiclass → output shape = [n_samples, 3]
+preds_prob = model.predict(X_valid)
+preds = np.argmax(preds_prob, axis=1)
+
+# Chuẩn hoá y thành [0,1,2] tương ứng [-1,0,1]
+from sklearn.preprocessing import LabelEncoder
+enc = LabelEncoder()
+y_valid_enc = enc.fit_transform(y_valid)
+
+acc = accuracy_score(y_valid_enc, preds)
+f1 = f1_score(y_valid_enc, preds, average="macro")
+report = classification_report(y_valid_enc, preds, digits=4)
 
 print(f"\n✅ Validation ACC={acc:.4f} | F1={f1:.4f}")
 print(report)
