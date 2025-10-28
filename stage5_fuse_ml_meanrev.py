@@ -174,12 +174,14 @@ if __name__ == "__main__":
     close = price["close"]
 
     # ML signal
-    ml = pd.read_csv(ML_FINAL_SIGNAL_FILE, index_col=0, parse_dates=True, squeeze=True)
+    ml = pd.read_csv(ML_FINAL_SIGNAL_FILE, index_col=0, parse_dates=True)
+    ml = ml.squeeze("columns")
     ml.index = ml.index.tz_localize(None)
     ml = ml.reindex(price.index, method="ffill").fillna(1).astype(int)
 
     # MR signal
-    mr = pd.read_csv(MR_BEST_SIGNAL_FILE, index_col=0, parse_dates=True, squeeze=True)
+    mr = pd.read_csv(MR_BEST_SIGNAL_FILE, index_col=0, parse_dates=True)
+    mr = mr.squeeze("columns")
     mr.index = mr.index.tz_localize(None)
     mr = mr.reindex(price.index, method="ffill").fillna(1).astype(int)
 
