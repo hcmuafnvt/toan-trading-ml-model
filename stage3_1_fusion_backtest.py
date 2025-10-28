@@ -142,18 +142,29 @@ if __name__ == "__main__":
         n_samples = len(X_full)
     sample_times = price.index[sample_idx[:n_samples]]
 
-    # ---------- SAVE y VECTOR (Stage 3 Export) ----------
-    # Giả định Stage 1 labeling đã tạo cột 'target' hoặc 'target_class' trong stage2_features
+    # ---------- SAVE / LOAD y VECTOR (Stage 3 Export) ----------
     y_candidates = [c for c in feat.columns if c.lower() in ("y","target","target_class","label")]
+
     if y_candidates:
+        # Nếu stage2_features.csv có target sẵn
         y = feat[y_candidates[0]].iloc[:n_samples].reset_index(drop=True)
-        y.to_csv("logs/stage3_y.csv", index=False)
-        Xy = pd.concat([X_full.reset_index(drop=True), y.rename("y")], axis=1)
-        Xy.to_csv("logs/stage3_Xy.csv", index=False)
-        print(f"✅ Saved target vector: logs/stage3_y.csv (len={len(y)})")
-        print(f"✅ Saved combined Xy: logs/stage3_Xy.csv (shape={Xy.shape})")
+        print(f"✅ Found target column in features: {y_candidates[0]} (len={len(y)})")
     else:
-        print("⚠️ Không tìm thấy cột target/y trong stage2_features.csv – skip export.")
+        # Nếu không có, tự load từ logs/stage3_y.csv (đã export từ Stage 1)
+        y_path = "logs/stage3_y.csv"
+        if os.path.exists(y_path):
+            y = pd.read_csv(y_path)["y"].iloc[:n_samples].reset_index(drop=True)
+            print(f"✅ Loaded y from {y_path} (len={len(y)})")
+        else:
+            print("❌ Không tìm thấy target column và cũng không có logs/stage3_y.csv → STOP.")
+            raise FileNotFoundError("Cần chạy Stage 1 trước để tạo logs/stage3_y.csv")
+
+    # --- Save y & Xy để Stage 4L dùng ---
+    y.to_csv("logs/stage3_y.csv", index=False)
+    Xy = pd.concat([X_full.reset_index(drop=True), y.rename('y')], axis=1)
+    Xy.to_csv("logs/stage3_Xy.csv", index=False)
+    print(f"✅ Saved target vector: logs/stage3_y.csv (len={len(y)})")
+    print(f"✅ Saved combined Xy: logs/stage3_Xy.csv (shape={Xy.shape})")
 
     # ---------- LOAD MODELS & PREDICT ----------
     probs_dict, pred_dict = {}, {}
