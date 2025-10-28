@@ -115,14 +115,19 @@ if __name__ == "__main__":
 
     # regime filter
     atr_q = atr.quantile(LOW_Q)
-    low_regime = atr < atr_q
+    mid_q = atr.quantile(0.75)
+    low_regime = atr < mid_q
 
     # --- Entry rules ---
     long_entry = ((close < lo) | (rsi < RSI_LOW)) & timeout_mask & low_regime
     short_entry = ((close > up) | (rsi > RSI_HIGH)) & timeout_mask & low_regime
-    exit_sig = ((close >= sma) | (close <= sma)).fillna(False)
+    # Exit khi chạm BB mid ± half band hoặc sau 20 nến
+    exit_zone = ((close.between(lo + (up - lo)*0.25, up - (up - lo)*0.25)))
+    exit_time = (long_entry.shift(20, fill_value=False)) | (short_entry.shift(20, fill_value=False))
+    exit_sig = (exit_zone | exit_time).fillna(False)
 
     print("✅ Entries generated:")
+    print(f"→ low_regime % = {low_regime.mean()*100:.1f}% | timeout % = {timeout_mask.mean()*100:.1f}%")
     print(pd.Series({
         "long_entry": int(long_entry.sum()),
         "short_entry": int(short_entry.sum()),
