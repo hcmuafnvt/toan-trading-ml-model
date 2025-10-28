@@ -234,12 +234,26 @@ def run():
     ensure_outdir(CFG.SELECTED_TXT)
     ensure_outdir(CFG.QUICK_JSON)
 
+    # --- LOAD FEATURE + TARGET MERGED ---
     log(f"Loading features: {CFG.FEATURES_PATH}")
-    df = pd.read_csv(CFG.FEATURES_PATH)
-    df = sanitize_columns(df)
+    X = pd.read_csv(CFG.FEATURES_PATH)
+    X = sanitize_columns(X)
 
-    # 1) detect target
-    target_col = detect_target_column(df, CFG.TARGET_CANDIDATES)
+    y_path = "logs/stage3_y.csv"
+    if os.path.exists(y_path):
+        y = pd.read_csv(y_path)["y"]
+        log(f"✅ Loaded target vector from {y_path} (len={len(y)})")
+    else:
+        log("❌ Không tìm thấy logs/stage3_y.csv — cần chạy Stage 1 hoặc 3 trước!")
+        raise FileNotFoundError("Missing logs/stage3_y.csv")
+
+    # Cắt theo độ dài nhỏ nhất để tránh lệch
+    n = min(len(X), len(y))
+    X = X.iloc[:n].reset_index(drop=True)
+    y = y.iloc[:n].reset_index(drop=True)
+
+    df = pd.concat([X, y.rename("y")], axis=1)
+    target_col = "y"    
     log(f"Detected target: {target_col}")
 
     y = df[target_col]
