@@ -30,6 +30,11 @@ price = price[["close","mid_h","mid_l","mid_o","volume"]].rename(
 )
 
 signal = pd.read_csv(SIGNAL_FILE, index_col=0, parse_dates=True)
+
+# --- Fix timezone mismatch ---
+price.index = price.index.tz_localize(None)
+signal.index = signal.index.tz_localize(None)
+
 signal = signal.reindex(price.index, method="ffill")
 
 # --- Mean Reversion only when timeout (1) ---
