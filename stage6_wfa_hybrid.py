@@ -340,10 +340,11 @@ if __name__ == "__main__":
 
         # 5.1 Train 3 models với class_weight balanced
         def train_one(X, y, name):
-            X_tr, X_val, y_tr, y_val = train_test_split(
-                X, y, test_size=0.2, shuffle=False
-            )
-            clf = lgb.LGBMClassifier(
+            # split giữ thứ tự time
+            X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+            # Train tạm model full để chọn top features
+            clf_tmp = lgb.LGBMClassifier(
                 objective="multiclass",
                 num_class=3,
                 n_estimators=200,
@@ -357,16 +358,37 @@ if __name__ == "__main__":
                 class_weight="balanced",
                 n_jobs=-1
             )
-            clf.fit(
+            clf_tmp.fit(
                 X_tr, y_tr,
                 eval_set=[(X_val, y_val)],
                 callbacks=[lgb.early_stopping(stopping_rounds=30, verbose=False)]
             )
-            # chọn top-k features
-            imp = pd.Series(clf.feature_importances_, index=X.columns).sort_values(ascending=False)
+
+            imp = pd.Series(clf_tmp.feature_importances_, index=X.columns).sort_values(ascending=False)
             top_cols = imp.head(min(TOPK_FEATURES, len(imp))).index.tolist()
-            # Lưu top_cols theo đúng thứ tự gốc trong X
-            top_cols = [c for c in X.columns if c in top_cols]
+
+            # Train lại final model chỉ với top-k columns
+            X_tr2, X_val2 = X_tr[top_cols], X_val[top_cols]
+            clf = lgb.LGBMClassifier(
+                objective="multiclass",
+                num_class=3,
+                n_estimators=200,
+                learning_rate=0.05,
+                max_depth=-1,
+                num_leaves=63,
+                min_data_in_leaf=96,
+                feature_fraction=0.9,
+                bagging_fraction=0.9,
+                bagging_freq=1,
+                class_weight="balanced",
+                n_jobs=-1
+            )
+            clf.fit(
+                X_tr2, y_tr,
+                eval_set=[(X_val2, y_val)],
+                callbacks=[lgb.early_stopping(stopping_rounds=30, verbose=False)]
+            )
+
             return clf, top_cols
 
         # top-k theo từng model (tách cột)
