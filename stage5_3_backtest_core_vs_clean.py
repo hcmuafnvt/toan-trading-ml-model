@@ -31,8 +31,8 @@ PIP_SIZE = 0.0001
 PIP_USD = 10.0
 SL_PIPS, TP_PIPS = 10, 10
 FEES = 0.0
-OUT_CSV = "logs/stage5_backtest_results.csv"
-OUT_TXT = "logs/stage5_summary.txt"
+OUT_CSV = "logs/stage5_3_backtest_results.csv"
+OUT_TXT = "logs/stage5_3_summary.txt"
 os.makedirs("logs", exist_ok=True)
 
 # ========== HELPERS ==========
