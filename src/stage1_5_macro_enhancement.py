@@ -20,7 +20,11 @@ print("🚀 Stage 1.5 — Enhancing macro dataset...")
 # -------------------------------------------------------------
 macro = pd.read_parquet(os.path.join(DATA_DIR, "macro_context.parquet"))
 macro.columns = [c[1] if isinstance(c, tuple) else c for c in macro.columns]
-macro.index = pd.to_datetime(macro.index).tz_localize("UTC")
+macro.index = pd.to_datetime(macro.index)
+if macro.index.tz is None:
+    macro.index = macro.index.tz_localize("UTC")
+else:
+    macro.index = macro.index.tz_convert("UTC")
 print(f"✅ Loaded base macro context: {list(macro.columns)}")
 
 # -------------------------------------------------------------
