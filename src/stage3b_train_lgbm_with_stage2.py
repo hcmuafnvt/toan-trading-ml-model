@@ -93,7 +93,12 @@ def load_pair_df(pair):
     df = add_fast_features(df, pair)
     df["y"] = make_labels(df, pair, N_AHEAD, THRESH_PIPS[pair])
     df = merge_stage2_features(df, pair)
-    df = df.dropna().astype("float32", errors="ignore")
+
+    # ✅ chỉ drop NaN của core price features, không drop toàn bộ
+    core_cols = ["mid_o","mid_h","mid_l","mid_c","volume","close","ret_1"]
+    df = df.dropna(subset=[c for c in core_cols if c in df.columns])
+
+    df = df.astype("float32", errors="ignore")
     return df
 
 def build_full_dataset(pairs):
