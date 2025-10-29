@@ -2,3 +2,5 @@ stage 4 - lap -> retrain lại stage 3b
 Exported importance → logs/{name}_feature_importance.csv
 
  1 → 3b → 4L → 3c 
+
+ T4_clean đang là baseline 59 features (F1 = 0.8743, ACC = 0.90).
