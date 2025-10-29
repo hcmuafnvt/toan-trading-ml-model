@@ -77,11 +77,28 @@ def make_labels(df, pair, n_ahead, th_pips):
 
 def merge_stage2_features(df, pair):
     if not os.path.exists(FEATURE_FILE):
+        print(f"⚠️  No Stage 2 feature file, skipping merge for {pair}")
         return df
+
     feat = pd.read_csv(FEATURE_FILE)
+    if "pair" not in feat.columns or pair not in feat["pair"].unique():
+        print(f"⚠️  No Stage 2 features for {pair}, skipping.")
+        return df
+
     row = feat.loc[feat["pair"] == pair].drop(columns=["pair"], errors="ignore")
-    for c in row.columns:
-        df[f"sf_{c}"] = row.iloc[0, row.columns.get_loc(c)]
+    if row.empty:
+        print(f"⚠️  Empty feature row for {pair}, skipping merge.")
+        return df
+
+    # ✅ chỉ giữ numeric columns (float/int/bool)
+    numeric_cols = row.select_dtypes(include=["number", "bool"]).columns
+    # đổi tên thêm prefix sf_
+    sf = pd.DataFrame(
+        np.repeat(row[numeric_cols].values, len(df), axis=0),
+        columns=[f"sf_{c}" for c in numeric_cols],
+        index=df.index
+    )
+    df = pd.concat([df, sf], axis=1)
     return df
 
 def load_pair_df(pair):
