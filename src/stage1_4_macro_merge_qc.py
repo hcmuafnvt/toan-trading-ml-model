@@ -1,5 +1,5 @@
 # =============================================================
-# Stage 1.4 — Macro ↔ FX Merge + QC  (AlphaForge)
+# Stage 1.4 — Macro ↔ FX Merge + QC  (AlphaForge, fixed)
 # =============================================================
 import os, pandas as pd
 import pandas_datareader.data as web
@@ -27,7 +27,7 @@ except Exception as e:
 macro = pd.read_parquet(os.path.join(DATA_DIR, "macro_context.parquet"))
 macro.columns = [c[1] if isinstance(c, tuple) else c for c in macro.columns]  # clean colnames
 if not dxy_dev.empty:
-    macro = macro.merge(dxy_dev, left_index=True, right_index=True, how="ffill")
+    macro = pd.merge(macro, dxy_dev, left_index=True, right_index=True, how="left")
 macro = macro.ffill().astype("float32")
 
 print(f"✅ Macro columns: {list(macro.columns)} | {len(macro):,} rows")
@@ -52,7 +52,8 @@ for pair in pairs:
     # ---------------------------------------------------------
     # QC correlation logic
     # ---------------------------------------------------------
-    corr = merged[["close", "DXY", "DXY_DEV", "UST2Y", "SPX", "VIX"]].corr().round(2)
+    cols = [c for c in ["close", "DXY", "DXY_DEV", "UST2Y", "SPX", "VIX"] if c in merged.columns]
+    corr = merged[cols].corr().round(2)
     print(f"\n📊 {pair} correlation matrix:")
     print(corr)
 
