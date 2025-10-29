@@ -28,15 +28,15 @@ else:
 print(f"✅ Loaded base macro context: {list(macro.columns)}")
 
 # -------------------------------------------------------------
-# 2️⃣ Fetch JGB10Y (Yahoo ^JG10)
+# 2️⃣ Fetch JGB10Y (FRED Japan 10-year yields)
 # -------------------------------------------------------------
 try:
-    jgb = yf.download("^JG10", start=START, end=END, progress=False)[["Close"]]
+    jgb = web.DataReader("IRLTLT01JPM156N", "fred", START, END)
     jgb.columns = ["JGB10Y"]
     jgb.index = pd.to_datetime(jgb.index).tz_localize("UTC")
-    print(f"✅ JGB10Y: {len(jgb):,} rows ({jgb.index.min().date()} → {jgb.index.max().date()})")
+    print(f"✅ JGB10Y (FRED): {len(jgb):,} rows ({jgb.index.min().date()} → {jgb.index.max().date()})")
 except Exception as e:
-    print(f"⚠️  Failed JGB10Y: {e}")
+    print(f"⚠️  Failed JGB10Y (FRED): {e}")
     jgb = pd.DataFrame()
 
 # -------------------------------------------------------------
@@ -77,9 +77,8 @@ print(macro2.tail())
 # -------------------------------------------------------------
 # 5️⃣ Quick QC correlation for USDJPY + XAUUSD
 # -------------------------------------------------------------
-fx_dir = os.path.join(DATA_DIR, "merged_macro_FX")
 for pair in ["USD_JPY", "XAU_USD"]:
-    fx_path = os.path.join(fx_dir, f"{pair}_M5_clean.parquet")
+    fx_path = os.path.join(DATA_DIR, f"{pair}_M5_clean.parquet")
     if not os.path.exists(fx_path):
         print(f"⚠️  Missing {fx_path}")
         continue
