@@ -83,9 +83,11 @@ def merge_stage2_features(df, pair):
     return df
 
 def load_pair_df(pair):
+    print(f"🔹 Loading {pair} ...")
     df = pd.read_parquet(f"{DATA_DIR}/{pair}_{GRAN}_clean.parquet")
     if "is_synthetic" in df.columns:
         df = df[df["is_synthetic"] == 0]
+    print(f"🔹 After removing synthetic: {len(df):,} rows")
     df = add_fast_features(df, pair)
     df["y"] = make_labels(df, pair, N_AHEAD, THRESH_PIPS[pair])
     df = merge_stage2_features(df, pair)
