@@ -17,6 +17,8 @@ from datetime import datetime
 import lightgbm as lgb
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 from multiprocessing import cpu_count
+import warnings
+warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
 
 # ---------- CONFIG ----------
 PAIRS = ["GBP_USD", "EUR_USD", "USD_JPY", "XAU_USD"]
@@ -94,7 +96,18 @@ def load_pair_df(pair):
     df = df.dropna().astype("float32", errors="ignore")
     return df
 
-def build_full_dataset(pairs): return pd.concat([load_pair_df(p) for p in pairs]).sort_index()
+def build_full_dataset(pairs):
+    frames = []
+    for p in pairs:
+        part = load_pair_df(p)
+        print(f"📊 {p} → {len(part):,} rows after loading")
+        if part is not None and not part.empty:
+            frames.append(part)
+    if not frames:
+        raise ValueError("❌ No data loaded from any pair.")
+    full = pd.concat(frames).sort_index()
+    print(f"✅ Combined {len(full):,} rows from {len(frames)} pairs")
+    return full
 
 def time_split(df):
     tr = df.loc[df.index <= TRAIN_END]
