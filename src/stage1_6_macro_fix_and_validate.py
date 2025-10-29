@@ -5,7 +5,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ================================
-# Stage 1.6 — Macro Fix & Validation
+# Stage 1.6 — Macro Fix & Validation (v2)
 # ================================
 DATA_DIR = "data"
 macro_path = os.path.join(DATA_DIR, "macro_context_v2.parquet")
@@ -35,7 +35,9 @@ print(f"📊 Resampled to daily: {len(macro_daily):,} rows")
 # 3️⃣ Add BoJ Policy Rate (FRED: INTGSTJPM193N)
 # -------------------------------------------------------------
 try:
-    boj = web.DataReader("INTGSTJPM193N", "fred", macro_daily.index.min(), macro_daily.index.max())
+    start = pd.Timestamp(macro_daily.index.min()).tz_localize(None)
+    end = pd.Timestamp(macro_daily.index.max()).tz_localize(None)
+    boj = web.DataReader("INTGSTJPM193N", "fred", start, end)
     boj.columns = ["BoJRate"]
     boj.index = pd.to_datetime(boj.index).tz_localize("UTC")
     macro_daily = macro_daily.merge(boj, left_index=True, right_index=True, how="left")
@@ -52,6 +54,7 @@ macro_daily["RealYieldTrend"] = macro_daily["RealYield"].diff(5).rolling(5).mean
 # -------------------------------------------------------------
 # 5️⃣ Save cleaned macro
 # -------------------------------------------------------------
+macro_daily["date"] = macro_daily.index.date  # ✅ add here (for later merge)
 out_path = os.path.join(DATA_DIR, "macro_context_v3.parquet")
 macro_daily.to_parquet(out_path)
 print(f"💾 Saved → {out_path} | cols={list(macro_daily.columns)}")
@@ -69,13 +72,11 @@ for pair in pairs:
     fx = pd.read_parquet(fx_path)
     fx = fx[~fx["synthetic"].astype(bool)] if "synthetic" in fx.columns else fx
     fx.index = pd.to_datetime(fx.index).tz_convert("UTC")
+    fx["date"] = fx.index.date  # ✅ define before merge
 
-    # Align by date only
-    fx["date"] = fx.index.date
-    macro_daily["date"] = macro_daily.index.date
     merged = pd.merge(
         fx[["close", "date"]],
-        macro_daily[["UST2Y", "JGB10Y", "BoJRate", "YieldSpread", "RealYield", "RealYieldTrend", "DXY"]],
+        macro_daily[["date", "UST2Y", "JGB10Y", "BoJRate", "YieldSpread", "RealYield", "RealYieldTrend", "DXY"]],
         on="date", how="left"
     ).dropna()
 
