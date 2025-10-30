@@ -51,6 +51,10 @@ def fetch_series(series_id, colname):
 
 def compute_features(df):
     """Compute deltas, spreads, composite index, and rolling mean."""
+    # --- Fill TBILL3M early (has missing on weekends) ---
+    if "TBILL3M" in df.columns:
+        df["TBILL3M"] = df["TBILL3M"].ffill().bfill()
+
     df["Fed_BS_Delta_7d"] = df["Fed_BalanceSheet"].diff(7)
     df["RRP_Delta_7d"] = df["RRP_Usage"].diff(7)
     df["SOFR_EFFR_SPREAD"] = df["SOFR"] - df["EFFR"]
@@ -63,17 +67,17 @@ def compute_features(df):
         (df["SOFR_EFFR_SPREAD"] * -1).rank(pct=True) * 0.2
     )
 
-    # rolling 30-day mean (with at least 5 valid days)
+    # rolling 30-day mean
     df["LIQ_COMPOSITE_30d_mean"] = df["LIQ_COMPOSITE"].rolling(30, min_periods=5).mean()
 
-    # --- Fill any missing values after computation ---
+    # --- Fill remaining NaN after computation ---
     for col in [
         "Fed_BalanceSheet", "RRP_Usage", "SOFR", "EFFR",
-        "LIQ_COMPOSITE", "LIQ_COMPOSITE_30d_mean"
+        "LIQ_COMPOSITE", "LIQ_COMPOSITE_30d_mean", "TBILL3M", "TBILL3M_MINUS_FEDFUNDS"
     ]:
         df[col] = df[col].ffill().bfill()
 
-    # --- Final validation to ensure no NaNs remain ---
+    # --- Final validation ---
     for c in df.columns:
         if df[c].isna().any():
             raise ValueError(f"❌ Missing values remain in {c}")
