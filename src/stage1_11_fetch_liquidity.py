@@ -50,27 +50,33 @@ def fetch_series(series_id, colname):
     return pd.Series(dtype="float64", name=colname)
 
 def compute_features(df):
-    """Compute deltas, spreads, composite index, z-scores."""
+    """Compute deltas, spreads, composite index, and rolling mean."""
     df["Fed_BS_Delta_7d"] = df["Fed_BalanceSheet"].diff(7)
     df["RRP_Delta_7d"] = df["RRP_Usage"].diff(7)
     df["SOFR_EFFR_SPREAD"] = df["SOFR"] - df["EFFR"]
     df["TBILL3M_MINUS_FEDFUNDS"] = df["TBILL3M"] - df["EFFR"]
 
-    # Simple liquidity composite (normalized mix)
-    liq_parts = []
-    for c in ["Fed_BS_Delta_7d", "RRP_Delta_7d", "SOFR_EFFR_SPREAD"]:
-        if c in df:
-            liq_parts.append((df[c] - df[c].mean()) / df[c].std(ddof=0))
-    df["LIQ_COMPOSITE"] = sum(liq_parts) / len(liq_parts)
+    # --- Compute composite liquidity index (rank-weighted) ---
+    df["LIQ_COMPOSITE"] = (
+        df["RRP_Delta_7d"].rank(pct=True) * 0.4 +
+        df["Fed_BS_Delta_7d"].rank(pct=True) * 0.4 +
+        (df["SOFR_EFFR_SPREAD"] * -1).rank(pct=True) * 0.2
+    )
 
-    # 30-day rolling mean for smoothing
+    # rolling 30-day mean (with at least 5 valid days)
     df["LIQ_COMPOSITE_30d_mean"] = df["LIQ_COMPOSITE"].rolling(30, min_periods=5).mean()
 
-    # --- NEW: z-scores for main drivers ---
-    for col in ["LIQ_COMPOSITE", "RRP_Usage", "Fed_BS_Delta_7d"]:
-        if col in df:
-            roll = df[col].rolling(30, min_periods=10)
-            df[f"{col}_Z30"] = (df[col] - roll.mean()) / roll.std(ddof=0)
+    # --- Fill any missing values after computation ---
+    for col in [
+        "Fed_BalanceSheet", "RRP_Usage", "SOFR", "EFFR",
+        "LIQ_COMPOSITE", "LIQ_COMPOSITE_30d_mean"
+    ]:
+        df[col] = df[col].ffill().bfill()
+
+    # --- Final validation to ensure no NaNs remain ---
+    for c in df.columns:
+        if df[c].isna().any():
+            raise ValueError(f"❌ Missing values remain in {c}")
 
     return df
 
