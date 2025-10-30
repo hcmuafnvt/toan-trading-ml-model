@@ -11,14 +11,15 @@ from datetime import datetime, timedelta, timezone
 
 # -------- CONFIG --------
 load_dotenv()
-API_KEY = os.getenv("TE_API_KEY")  # e.g. c47b6f36da0348d:zq0wb4i0swy4fk6
+CLIENT_ID = os.getenv("TE_CLIENT_ID")
+CLIENT_SECRET = os.getenv("TE_CLIENT_SECRET")
 OUT_FILE = "data/econ_calendar_master.parquet"
 
 REGIONS = ["United States", "Japan", "Euro Area", "United Kingdom"]
 START = (datetime.now(timezone.utc) - timedelta(days=730)).strftime("%Y-%m-%d")
 END = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-BASE_URL = f"https://api.tradingeconomics.com/calendar?c={API_KEY}"
+BASE_URL = f"https://api.tradingeconomics.com/calendar?client={CLIENT_ID}&token={CLIENT_SECRET}"
 
 # -------- FETCH --------
 print(f"🚀 Stage 1.8a — Fetching Economic Calendar ({START} → {END})")
