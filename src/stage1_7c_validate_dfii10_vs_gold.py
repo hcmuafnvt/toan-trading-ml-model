@@ -11,7 +11,7 @@ import numpy as np
 # CONFIG
 # =====================
 MACRO_FILE = "data/macro_gold_fix.parquet"
-XAU_FILE   = "data/XAU_USD_M5_2024.parquet"
+XAU_FILE   = "data/XAU_USD_M5_clean.parquet"
 ROLL_DAYS  = 7       # smoothing window
 SHIFT_DAYS = 3       # lag shift (gold reacts after yields)
 
