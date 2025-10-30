@@ -40,20 +40,25 @@ else:
     fx = pd.read_parquet(PAIR_FILE)
     if "synthetic" in fx.columns:
         fx = fx[~fx["synthetic"].astype(bool)]
+
     fx.index = pd.to_datetime(fx.index)
     if fx.index.tz is None:
         fx.index = fx.index.tz_localize("UTC")
     else:
         fx.index = fx.index.tz_convert("UTC")
-    fx["date"] = fx.index.date
-    fx_daily = fx.groupby("date")["close"].mean().to_frame("USDJPY_close")
 
-    macro["date"] = macro.index.date
-    macro_daily = macro.groupby("date")["JPY_driver"].last().to_frame("JPY_driver")
+    # Downsample to daily mean
+    fx_daily = fx.resample("1D")["close"].mean().dropna().to_frame("USDJPY_close")
+
+    macro_daily = macro.resample("1D")["JPY_driver"].last().dropna().to_frame("JPY_driver")
+
+    # Align indices for asof merge
+    fx_daily = fx_daily.sort_index()
+    macro_daily = macro_daily.sort_index()
 
     merged = pd.merge_asof(
-        fx_daily.sort_index(),
-        macro_daily.sort_index(),
+        fx_daily,
+        macro_daily,
         left_index=True,
         right_index=True,
         direction="backward"
