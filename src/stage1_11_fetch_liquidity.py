@@ -100,6 +100,7 @@ def main():
     df["Fed_BalanceSheet"] = df["Fed_BalanceSheet"].ffill().bfill()
     df["RRP_Usage"] = df["RRP_Usage"].ffill().bfill()
     df["SOFR"] = df["SOFR"].ffill().bfill()
+    df["EFFR"] = df["EFFR"].ffill().bfill()
 
     # Forward-fill TBILL3M & spread-related columns
     for col in ["TBILL3M"]:
