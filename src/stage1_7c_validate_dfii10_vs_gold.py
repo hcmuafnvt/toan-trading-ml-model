@@ -11,32 +11,36 @@ import numpy as np
 # CONFIG
 # =====================
 MACRO_FILE = "data/macro_gold_fix.parquet"
-XAU_FILE   = "data/XAU_USD_M5_2024.parquet"   # dùng data của vàng
-ROLL_DAYS  = 7       # rolling smoothing
-SHIFT_DAYS = 3       # lead/lag shift (gold reacts after yields)
+XAU_FILE   = "data/XAU_USD_M5_2024.parquet"
+ROLL_DAYS  = 7       # smoothing window
+SHIFT_DAYS = 3       # lag shift (gold reacts after yields)
 
 # =====================
-# LOAD DATA
+# LOAD MACRO
 # =====================
 print("🚀 Stage 1.7c — Validate DFII10 (TIPS Real Yield) vs XAUUSD")
 
 macro = pd.read_parquet(MACRO_FILE)
-if not macro.index.tz:
-    macro.index = pd.to_datetime(macro["date"]).tz_localize("UTC")
+
+# --- Fix index ---
+if "date" in macro.columns:
+    macro["date"] = pd.to_datetime(macro["date"], utc=True, errors="coerce")
+    macro = macro.set_index("date").sort_index()
+else:
+    macro.index = pd.to_datetime(macro.index, utc=True, errors="coerce")
 
 # Smooth DFII10
 macro["DFII10_smooth"] = macro["RealYield_DFII10"].rolling(ROLL_DAYS, min_periods=1).mean()
-# Shift forward to simulate reaction delay
 macro["DFII10_shifted"] = macro["DFII10_smooth"].shift(SHIFT_DAYS)
 
 # =====================
 # LOAD GOLD PRICE
 # =====================
 price = pd.read_parquet(XAU_FILE)
-if isinstance(price.index, pd.DatetimeIndex):
-    price = price.tz_convert("UTC")
-else:
+if not isinstance(price.index, pd.DatetimeIndex):
     price.index = pd.to_datetime(price.index, utc=True)
+else:
+    price = price.tz_convert("UTC")
 
 price["close"] = price["mid_c"] if "mid_c" in price.columns else price["close"]
 daily = price["close"].resample("1D").last().dropna()
@@ -53,12 +57,9 @@ merged = pd.merge_asof(
 corr = merged["close"].corr(merged["DFII10_shifted"])
 
 print(f"\n📊 Correlation (XAUUSD close vs DFII10_shifted_{ROLL_DAYS}d, +{SHIFT_DAYS}d lag): {corr:.3f}")
-
-# Optional: save audit for plotting later
 merged.to_parquet("data/xauusd_dfii10_corr_audit.parquet")
 print("💾 Saved → data/xauusd_dfii10_corr_audit.parquet")
 
-# Interpretation
 if corr < -0.4:
     print("✅ Strong negative correlation — DFII10 works as expected.")
 elif corr < -0.2:
