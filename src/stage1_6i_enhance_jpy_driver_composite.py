@@ -59,69 +59,32 @@ macro = macro.rename(columns={
     "('VIX', '^VIX')" : "VIX"
 })
 
-# 2️⃣ Fetch Japan CPI YoY (inflation proxy)
-# We'll approximate Japan real yield = JGB10Y - CPI_JP_YoY
-# FRED series: "JPNCPIALLMINMEI" (Consumer Price Index: All Items for Japan, % change YoY)
-print("🌐 Fetching Japan CPI YoY from FRED...")
-macro_start = macro.index.min().tz_convert("UTC").tz_localize(None)
-macro_end   = macro.index.max().tz_convert("UTC").tz_localize(None)
+# 2️⃣ Build core drivers that we are SURE we have (no Japan CPI)
 
-try:
-    jp_cpi = web.DataReader("JPNCPIALLMINMEI", "fred", macro_start, macro_end)
-    jp_cpi.columns = ["JP_CPI_YoY"]
-    jp_cpi.index = pd.to_datetime(jp_cpi.index).tz_localize("UTC")
-    print(f"   ✅ JP CPI YoY: {len(jp_cpi)} rows ({jp_cpi.index.min().date()} → {jp_cpi.index.max().date()})")
-except Exception as e:
-    print(f"   ⚠️ Failed JP CPI fetch: {e}")
-    jp_cpi = pd.DataFrame(columns=["JP_CPI_YoY"])
-
-# merge JP CPI YoY into macro
-macro = macro.merge(jp_cpi, left_index=True, right_index=True, how="left")
-macro["JP_CPI_YoY"] = macro["JP_CPI_YoY"].ffill()
-
-# 3️⃣ Build Japan real yield proxy
-# RealYield_JP ≈ JGB10Y - JP_CPI_YoY
-macro["RealYield_JP_proxy"] = macro["JGB10Y"] - macro["JP_CPI_YoY"]
-
-# 4️⃣ Build individual candidate drivers
-
-# 4a. Long-term rate spread (US10Y - JGB10Y)
+# Long-term yield spread (US10Y - JGB10Y)
 macro["Spr_long_US_JP"] = macro["DGS10"] - macro["JGB10Y"]
 
-# 4b. Real yield differential:
-#     (US real yield shifted) - (JP real yield proxy)
-macro["Spr_realDiff_US_JP"] = macro["RealYield_shifted"] - macro["RealYield_JP_proxy"]
-
-# 4c. Risk sentiment carry factor
-# Heuristic:
-#   - when SPX daily return is strong and VIX is dropping,
-#     market is risk-on -> funding JPY shorts -> USDJPY tends to go up.
-#
-# We'll create:
-#   RiskOn = (+ΔSPX%) + (-ΔVIX%)
-#   Use 1-day % change
-macro["SPX_ret_1d"] = macro["SPX"].pct_change()  # ~ equity risk-on if positive
-macro["VIX_chg_1d"] = macro["VIX"].pct_change()  # ~ fear up if positive
-# invert VIX because risk-on = VIX down
+# Risk sentiment factor:
+# SPX up (risk-on), VIX down (fear down) -> people short JPY to fund risk trades.
+macro["SPX_ret_1d"] = macro["SPX"].pct_change()
+macro["VIX_chg_1d"] = macro["VIX"].pct_change()
 macro["RiskOnFactor"] = macro["SPX_ret_1d"] - macro["VIX_chg_1d"]
 
-# 5️⃣ Resample everything daily and dropna smart
+# 3️⃣ Resample to daily
 daily_macro = (
     macro[[
         "Spr_long_US_JP",
-        "Spr_realDiff_US_JP",
         "RiskOnFactor"
     ]]
     .resample("1D")
     .last()
 )
 
-# Some forward fill for slow series (yields don't update every single UTC day)
+# Forward fill yield spread (bond markets can be closed some days)
 daily_macro["Spr_long_US_JP"] = daily_macro["Spr_long_US_JP"].ffill()
-daily_macro["Spr_realDiff_US_JP"] = daily_macro["Spr_realDiff_US_JP"].ffill()
-# RiskOnFactor is daily flow, don't ffill that too far (leave NaN OK)
+# RiskOnFactor is daily flow signal; don't forward fill, keep NaN allowed
 
-# 6️⃣ Load USDJPY and resample to daily
+# 4️⃣ Load USDJPY daily
 fx = pd.read_parquet(PAIR_FILE)
 if "synthetic" in fx.columns:
     fx = fx[~fx["synthetic"].astype(bool)]
@@ -134,7 +97,7 @@ else:
 
 fx_daily = fx["close"].resample("1D").mean().to_frame("USDJPY_close")
 
-# 7️⃣ Merge with asof (align last known macro to FX day)
+# 5️⃣ Align via merge_asof
 merged = pd.merge_asof(
     fx_daily.sort_index(),
     daily_macro.sort_index(),
@@ -143,57 +106,42 @@ merged = pd.merge_asof(
     direction="backward"
 ).dropna()
 
-# 8️⃣ Normalize components before composite
-# We'll z-score each factor so they’re comparable scale.
+# 6️⃣ Z-score components to combine them
 def zscore(s):
     return (s - s.mean()) / (s.std() + 1e-9)
 
 merged["Z_long"]   = zscore(merged["Spr_long_US_JP"])
-merged["Z_real"]   = zscore(merged["Spr_realDiff_US_JP"])
 merged["Z_riskon"] = zscore(merged["RiskOnFactor"].fillna(0))
 
-# 9️⃣ Build composite driver
-# Weighted blend:
-# - long-term yield spread is dominant (0.6)
-# - real yield differential meaningful medium-term (0.3)
-# - risk-on factor explains carry bursts (0.1)
-merged["JPY_driver_composite"] = (
-    0.6 * merged["Z_long"] +
-    0.3 * merged["Z_real"] +
-    0.1 * merged["Z_riskon"]
+# Composite without JP CPI
+merged["JPY_driver_composite_nocpi"] = (
+    0.8 * merged["Z_long"] +
+    0.2 * merged["Z_riskon"]
 )
 
-# 10️⃣ Measure correlations
-components = [
-    ("Spr_long_US_JP",         "LongTermYieldSpread"),
-    ("Spr_realDiff_US_JP",     "RealYieldDiff"),
-    ("RiskOnFactor",           "RiskOnFactor"),
-    ("JPY_driver_composite",   "CompositeDriver")
-]
+# 7️⃣ Correlation diagnostics
+def corr_safe(a, b):
+    if a.isna().all() or b.isna().all():
+        return float("nan")
+    return a.corr(b)
+
+corr_long   = corr_safe(merged["USDJPY_close"], merged["Spr_long_US_JP"])
+corr_risk   = corr_safe(merged["USDJPY_close"], merged["RiskOnFactor"])
+corr_comp   = corr_safe(merged["USDJPY_close"], merged["JPY_driver_composite_nocpi"])
 
 print("\n📊 Correlation vs USDJPY_close (daily)")
-corr_results = {}
-for col, label in components:
-    if col in merged.columns:
-        c = merged["USDJPY_close"].corr(merged[col])
-        corr_results[label] = c
-        arrow = "↑ (should be positive)" if (c is not None and c > 0) else "↓"
-        print(f"   {label:<20} corr = {c:.3f} {arrow}")
-    else:
-        corr_results[label] = None
-        print(f"   {label:<20} missing")
+print(f"   LongTermYieldSpread     corr = {corr_long:.3f} ↑ (should be positive)")
+print(f"   RiskOnFactor            corr = {corr_risk:.3f} ↑ (risk-on -> USDJPY up)")
+print(f"   Composite_noCPI         corr = {corr_comp:.3f} ↑ (target >= 0.40)")
 
-# 11️⃣ Pick best explaining factor
-valid = {k:v for k,v in corr_results.items() if v is not None}
-if valid:
-    best_key = max(valid, key=lambda k: abs(valid[k]))
-    print(f"\n🏁 Best USDJPY macro explainer: {best_key} "
-          f"with corr={valid[best_key]:.3f}")
-else:
-    print("\n❌ No usable drivers")
-
-# 12️⃣ Save final merged daily driver snapshot for audit / future join if needed
+# 8️⃣ Save audit
 OUT_AUDIT_FILE = os.path.join(DATA_DIR, "usdjpy_driver_audit.parquet")
 merged.to_parquet(OUT_AUDIT_FILE)
 print(f"\n💾 Audit snapshot saved → {OUT_AUDIT_FILE}")
-print("🎯 Stage 1.6i complete — candidate JPY_driver_composite generated & evaluated.")
+
+if corr_comp >= 0.40:
+    print("🎯 RESULT: PASS. composite_noCPI is strong enough for Stage 2 features.")
+elif corr_long >= 0.40:
+    print("🎯 RESULT: SEMI-PASS. use Spr_long_US_JP directly as JPY_driver_final.")
+else:
+    print("⚠️ RESULT: WEAK (<0.40). USDJPY will need special regime / intervention signals in Stage 1.8.")
