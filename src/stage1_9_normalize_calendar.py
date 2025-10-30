@@ -43,7 +43,7 @@ def main():
     df["event_key"] = df["event"].apply(extract_event_key)
 
     # Temporal features
-    df["event_hour_local"] = pd.to_datetime(df["time_local"], errors="coerce").dt.hour
+    df["event_hour_local"] = pd.to_datetime(df["time_local"], format="%H:%M", errors="coerce").dt.hour
     df["event_weekday"] = pd.to_datetime(df["timestamp_utc"]).dt.weekday
     df["event_month"] = pd.to_datetime(df["timestamp_utc"]).dt.month
 
