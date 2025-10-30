@@ -5,6 +5,8 @@ import pandas as pd
 from fredapi import Fred
 from datetime import datetime
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 # -------- CONFIG --------
 FRED_API_KEY = os.getenv("FRED_API_KEY")
