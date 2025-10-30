@@ -95,6 +95,9 @@ def main():
     df = df.reset_index().rename(columns={"index": "date"})
     df = df.sort_values("date").reset_index(drop=True)
 
+    # --- NEW: forward-fill Fed_BalanceSheet (weekly series) ---
+    df["Fed_BalanceSheet"] = df["Fed_BalanceSheet"].ffill()
+
     # Forward-fill TBILL3M & spread-related columns
     for col in ["TBILL3M"]:
         df[f"{col}_orig_na"] = df[col].isna()
