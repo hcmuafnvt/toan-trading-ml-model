@@ -105,11 +105,21 @@ need_from_v5 = [
 keep_v5 = [c for c in need_from_v5 if c in macro5.columns]
 macro5_slim = macro5[keep_v5].copy()
 
-# 3️⃣ Merge v6 + v5 (outer join then ffill to align)
-macro_merged = pd.concat([macro6, macro5_slim], axis=1)
+# 3️⃣ Merge v6 + v5 (avoid duplicate columns)
+dupes = [c for c in macro5_slim.columns if c in macro6.columns]
+if dupes:
+    print(f"⚙️ Removing duplicate cols from v5 before merge: {dupes}")
+    macro5_slim = macro5_slim.drop(columns=dupes)
 
-# forward fill slow-moving stuff like yields, central bank rates
+macro_merged = pd.concat([macro6, macro5_slim], axis=1)
 macro_merged = macro_merged.sort_index().ffill()
+
+# verify uniqueness
+dup_cols = macro_merged.columns[macro_merged.columns.duplicated()].unique().tolist()
+if dup_cols:
+    print(f"⚠️ Still duplicate columns after merge: {dup_cols}")
+else:
+    print(f"✅ All column names unique ({len(macro_merged.columns)} total).")
 
 # 4️⃣ Add JPY_regime_flag placeholder (Stage 1.8 will populate with intervention/risk regime)
 macro_merged["JPY_regime_flag"] = pd.NA
