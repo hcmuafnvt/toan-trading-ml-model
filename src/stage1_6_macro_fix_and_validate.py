@@ -32,18 +32,18 @@ macro_daily = macro.resample("1D").ffill()
 print(f"📊 Resampled to daily: {len(macro_daily):,} rows")
 
 # -------------------------------------------------------------
-# 3️⃣ Add BoJ Policy Rate (FRED: INTGSTJPM193N)
+# 3️⃣ Add BoJ Policy Rate — dùng Interbank Rate (FRED: IR3TIB01JPM156N)
 # -------------------------------------------------------------
 try:
     start = pd.Timestamp(macro_daily.index.min()).tz_localize(None)
     end = pd.Timestamp(macro_daily.index.max()).tz_localize(None)
-    boj = web.DataReader("INTGSTJPM193N", "fred", start, end)
+    boj = web.DataReader("IR3TIB01JPM156N", "fred", start, end)
     boj.columns = ["BoJRate"]
     boj.index = pd.to_datetime(boj.index).tz_localize("UTC")
     macro_daily = macro_daily.merge(boj, left_index=True, right_index=True, how="left")
-    print(f"✅ BoJ Policy Rate: {len(boj):,} rows ({boj.index.min().date()} → {boj.index.max().date()})")
+    print(f"✅ BoJ Interbank Rate: {len(boj):,} rows ({boj.index.min().date()} → {boj.index.max().date()})")
 except Exception as e:
-    print(f"⚠️  Failed BoJ Policy Rate fetch: {e}")
+    print(f"⚠️  Failed BoJ Interbank Rate fetch: {e}")
     macro_daily["BoJRate"] = None
 
 # -------------------------------------------------------------
@@ -60,7 +60,7 @@ macro_daily.to_parquet(out_path)
 print(f"💾 Saved → {out_path} | cols={list(macro_daily.columns)}")
 
 # -------------------------------------------------------------
-# 6️⃣ Re-merge with FX closes for validation
+# 6️⃣ Re-merge with FX closes for validation (asof daily align)
 # -------------------------------------------------------------
 pairs = ["USD_JPY", "XAU_USD"]
 for pair in pairs:
@@ -72,13 +72,21 @@ for pair in pairs:
     fx = pd.read_parquet(fx_path)
     fx = fx[~fx["synthetic"].astype(bool)] if "synthetic" in fx.columns else fx
     fx.index = pd.to_datetime(fx.index).tz_convert("UTC")
-    fx["date"] = fx.index.date  # ✅ define before merge
 
-    merged = pd.merge(
-        fx[["close", "date"]],
-        macro_daily[["date", "UST2Y", "JGB10Y", "BoJRate", "YieldSpread", "RealYield", "RealYieldTrend", "DXY"]],
-        on="date", how="left"
+    fx["date"] = pd.to_datetime(fx.index.date)
+    macro_daily["date"] = pd.to_datetime(macro_daily.index.date)
+
+    merged = pd.merge_asof(
+        fx.sort_values("date"),
+        macro_daily.sort_values("date"),
+        on="date",
+        direction="backward"
     ).dropna()
+
+    corr = merged[["close", "UST2Y", "JGB10Y", "BoJRate", "YieldSpread",
+                   "RealYield", "RealYieldTrend", "DXY"]].corr().round(2)
+    print(f"\n📊 {pair} correlation matrix (validated):")
+    print(corr)
 
     corr = merged[["close", "UST2Y", "JGB10Y", "BoJRate", "YieldSpread", "RealYield", "RealYieldTrend", "DXY"]].corr().round(2)
     print(f"\n📊 {pair} correlation matrix (validated):")
