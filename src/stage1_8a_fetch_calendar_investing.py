@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 from bs4 import BeautifulSoup
 import cloudscraper
+from dotenv import load_dotenv
+load_dotenv()
 
 # CONFIG (test short range first)
 START = datetime(2024, 1, 1)
