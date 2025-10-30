@@ -105,11 +105,15 @@ for pair, spread_col in pairs:
     fx["date"] = pd.to_datetime(fx.index.date)
 
     daily_close = fx.groupby("date")["close"].mean().to_frame("close")
+    daily_close.index = pd.to_datetime(daily_close.index).tz_localize("UTC")
 
     # align macro daily using asof (backward fill by date)
+    macro_aligned = macro[[spread_col]].copy()
+    macro_aligned.index = pd.to_datetime(macro_aligned.index).tz_convert("UTC")
+
     merged = pd.merge_asof(
         daily_close.sort_index(),
-        macro[[spread_col]].sort_index().rename(columns={spread_col: "spread"}),
+        macro_aligned.sort_index().rename(columns={spread_col: "spread"}),
         left_index=True,
         right_index=True,
         direction="backward"
