@@ -1,15 +1,15 @@
 # src/stage1_8a_fetch_calendar_investing.py
-import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import time
+import cloudscraper
 
 URL = "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData"
+scraper = cloudscraper.create_scraper()
 
-# Giai đoạn 1: 1/11/2023 → 30/10/2025
-START = datetime(2023, 11, 1)
-END = datetime(2025, 10, 30)
+START = datetime(2024, 1, 1)
+END = datetime(2024, 1, 5)
 
 def fetch_investing_page(day):
     payload = {
@@ -17,37 +17,36 @@ def fetch_investing_page(day):
         "importance[]": [1, 2, 3],
         "dateFrom": day.strftime("%Y-%m-%d"),
         "dateTo": day.strftime("%Y-%m-%d"),
-        "timeZone": 55,  # UTC
+        "timeZone": 55,
         "lang": "en"
     }
-    headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.post(URL, data=payload, headers=headers, timeout=30)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        "Referer": "https://www.investing.com/economic-calendar/"
+    }
+    r = scraper.post(URL, data=payload, headers=headers, timeout=30)
     if r.status_code != 200:
         print(f"⚠️ {day.date()} HTTP {r.status_code}")
         return []
+
     soup = BeautifulSoup(r.text, "html.parser")
     rows = soup.select("tr.js-event-item")
     data = []
     for row in rows:
         try:
-            time_str = row.get("data-event-datetime")
-            event_time = datetime.strptime(time_str, "%Y/%m/%d %H:%M:%S")
-            event = row.get("data-event-title", "")
-            country = row.get("data-country", "")
-            currency = row.get("data-currency", "")
-            impact = row.get("data-impact", "")
-            actual = row.get("data-event-actual", "")
-            forecast = row.get("data-event-forecast", "")
-            previous = row.get("data-event-previous", "")
+            t = row.get("data-event-datetime")
+            if not t:
+                continue
+            event_time = datetime.strptime(t, "%Y/%m/%d %H:%M:%S")
             data.append({
                 "datetime": event_time,
-                "country": country,
-                "currency": currency,
-                "event": event,
-                "actual": actual,
-                "forecast": forecast,
-                "previous": previous,
-                "impact": impact
+                "country": row.get("data-country"),
+                "currency": row.get("data-currency"),
+                "event": row.get("data-event-title"),
+                "impact": row.get("data-impact"),
+                "actual": row.get("data-event-actual"),
+                "forecast": row.get("data-event-forecast"),
+                "previous": row.get("data-event-previous")
             })
         except Exception:
             continue
@@ -56,17 +55,18 @@ def fetch_investing_page(day):
 all_data = []
 day = START
 while day <= END:
-    daily = fetch_investing_page(day)
-    if daily:
-        all_data.extend(daily)
-        print(f"✅ {day.date()} → {len(daily)} events")
+    events = fetch_investing_page(day)
+    if events:
+        print(f"✅ {day.date()} → {len(events)} events")
+        all_data.extend(events)
+    else:
+        print(f"⚠️ {day.date()} → no data")
     day += timedelta(days=1)
-    time.sleep(1.5)  # tránh bị block
+    time.sleep(1.5)
 
 if all_data:
     df = pd.DataFrame(all_data)
     df.to_parquet("data/econ_calendar_investing.parquet")
     print(f"\n💾 Saved {len(df)} rows → data/econ_calendar_investing.parquet")
-    print(df["country"].value_counts())
 else:
     print("❌ No events fetched.")
