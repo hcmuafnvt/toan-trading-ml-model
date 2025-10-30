@@ -1,139 +1,117 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Stage 1.11 — Fetch Liquidity & Funding Drivers (FINAL baseline)
----------------------------------------------------------------
-Fetch Fed balance sheet, RRP, SOFR, EFFR, T-bill 3M, compute derived features.
-
-Enhancements:
-- Forward-fill TBILL3M & TBILL3M_MINUS_FEDFUNDS across weekends/holidays.
-- Add flag is_weekend_or_holiday = True when value filled (not original print).
-- Compute 30d z-scores for core liquidity factors.
-- Assert no NaN in critical fields before save.
+Stage 1.11 — Final: Fetch, clean, and compute Liquidity & Funding Drivers
+Output: data/macro_liquidity.parquet
 """
 
-import os
-import time
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from fredapi import Fred
-from dotenv import load_dotenv
-from pathlib import Path
 
-# ==============================
+# =============================
 # CONFIG
-# ==============================
-load_dotenv()
-API_KEY = os.getenv("FRED_API_KEY")
-if not API_KEY:
-    raise ValueError("❌ Missing FRED_API_KEY in .env")
+# =============================
+OUT_FILE_PARQUET = "data/macro_liquidity.parquet"
+API_KEY = "<YOUR_FRED_API_KEY>"
+START_DATE = "2020-01-01"
+END_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 fred = Fred(api_key=API_KEY)
 
-OUT_FILE_PARQUET = "data/liquidity_fxdrivers.parquet"
-START_DATE = "2020-01-01"
-END_DATE = datetime.utcnow().strftime("%Y-%m-%d")
-
-# ==============================
-# FETCH HELPERS
-# ==============================
-def fetch_series(series_id, colname):
-    """Fetch FRED series with retry."""
-    for _ in range(3):
-        try:
-            s = fred.get_series(series_id, observation_start=START_DATE, observation_end=END_DATE)
-            return s.rename(colname)
-        except Exception as e:
-            print(f"⚠️ Retry {series_id} due to {e}")
-            time.sleep(2)
-    print(f"❌ Failed {series_id}")
-    return pd.Series(dtype="float64", name=colname)
-
-def compute_features(df):
-    """Compute deltas, spreads, composite index, and rolling mean."""
-    # --- Fill key base columns early ---
-    for base_col in ["Fed_BalanceSheet", "RRP_Usage", "SOFR", "EFFR", "TBILL3M"]:
-        if base_col in df.columns:
-            df[base_col] = df[base_col].ffill().bfill()
-
-    # --- Compute deltas & spreads ---
-    df["Fed_BS_Delta_7d"] = df["Fed_BalanceSheet"].diff(7)
-    df["RRP_Delta_7d"] = df["RRP_Usage"].diff(7)
-    df["SOFR_EFFR_SPREAD"] = df["SOFR"] - df["EFFR"]
-    df["TBILL3M_MINUS_FEDFUNDS"] = df["TBILL3M"] - df["EFFR"]
-
-    # Fill initial NaN in delta columns (from first 7 days)
-    for delta_col in ["Fed_BS_Delta_7d", "RRP_Delta_7d"]:
-        df[delta_col] = df[delta_col].ffill().bfill()
-
-    # --- Compute composite liquidity index (rank-weighted) ---
-    df["LIQ_COMPOSITE"] = (
-        df["RRP_Delta_7d"].rank(pct=True) * 0.4 +
-        df["Fed_BS_Delta_7d"].rank(pct=True) * 0.4 +
-        (df["SOFR_EFFR_SPREAD"] * -1).rank(pct=True) * 0.2
-    )
-
-    df["LIQ_COMPOSITE_30d_mean"] = df["LIQ_COMPOSITE"].rolling(30, min_periods=5).mean()
-
-    # --- Fill remaining NaN globally ---
-    df = df.ffill().bfill()
-
-    # --- Final validation ---
-    for c in df.columns:
-        if df[c].isna().any():
-            raise ValueError(f"❌ Missing values remain in {c}")
-
+# =============================
+# FETCH
+# =============================
+def fetch_series(series_id):
+    s = fred.get_series(series_id)
+    df = s.to_frame(name=series_id).reset_index()
+    df.columns = ["date", series_id]
     return df
 
-# ==============================
-# MAIN
-# ==============================
-def main():
-    Path("data").mkdir(exist_ok=True)
-    print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] 🚀 Stage 1.11 — Fetching liquidity & funding drivers")
 
-    # fetch core series
-    data = {
-        "Fed_BalanceSheet": fetch_series("WALCL", "Fed_BalanceSheet"),
-        "RRP_Usage": fetch_series("RRPONTSYD", "RRP_Usage"),
-        "TBILL3M": fetch_series("DTB3", "TBILL3M"),
-        "SOFR": fetch_series("SOFR", "SOFR"),
-        "EFFR": fetch_series("EFFR", "EFFR"),
+def main():
+    print(f"[{datetime.now()}] 🚀 Stage 1.11 — Fetching liquidity & funding drivers")
+
+    series_map = {
+        "WALCL": "Fed_BalanceSheet",            # Fed total assets
+        "RRPONTSYD": "RRP_Usage",               # Reverse repo usage
+        "DTB3": "TBILL3M",                      # 3-month T-Bill
+        "SOFR": "SOFR",
+        "EFFR": "EFFR",
     }
 
-    df = pd.concat(data.values(), axis=1)
-    df.index = pd.to_datetime(df.index)
-    df = df.reset_index().rename(columns={"index": "date"})
-    df = df.sort_values("date").reset_index(drop=True)
+    dfs = []
+    for sid, alias in series_map.items():
+        print(f"[{datetime.now()}] ↳ Fetch {sid} as {alias}")
+        try:
+            df = fetch_series(sid)
+            df.rename(columns={sid: alias}, inplace=True)
+            dfs.append(df)
+        except Exception as e:
+            print(f"❌ Error fetching {sid}: {e}")
 
-    # --- NEW: fix Fed_BalanceSheet (weekly series) ---
-    # Some early rows before the first Fed H.4.1 release are NaN → fill both sides
-    df["Fed_BalanceSheet"] = df["Fed_BalanceSheet"].ffill().bfill()
-    df["RRP_Usage"] = df["RRP_Usage"].ffill().bfill()
-    df["SOFR"] = df["SOFR"].ffill().bfill()
-    df["EFFR"] = df["EFFR"].ffill().bfill()
+    merged = dfs[0]
+    for df in dfs[1:]:
+        merged = pd.merge(merged, df, on="date", how="outer")
 
-    # Forward-fill TBILL3M & spread-related columns
-    for col in ["TBILL3M"]:
-        df[f"{col}_orig_na"] = df[col].isna()
-        df[col] = df[col].ffill()
-    df["is_weekend_or_holiday"] = df["TBILL3M_orig_na"]
-    df.drop(columns=["TBILL3M_orig_na"], inplace=True)
+    merged = merged.sort_values("date").reset_index(drop=True)
+    merged = merged.loc[merged["date"] >= START_DATE].copy()
 
-    # Compute derived fields
-    df = compute_features(df)
+    # =============================
+    # FEATURE ENGINEERING
+    # =============================
 
-    # --- Assert completeness ---
-    core_cols = ["Fed_BalanceSheet", "RRP_Usage", "SOFR", "EFFR", "LIQ_COMPOSITE"]
-    for c in core_cols:
-        if df[c].isna().any():
-            raise ValueError(f"❌ Missing values remain in {c}")
+    def compute_features(df):
+        # --- Fill base columns ---
+        for c in ["Fed_BalanceSheet", "RRP_Usage", "TBILL3M", "SOFR", "EFFR"]:
+            if c in df.columns:
+                df[c] = df[c].ffill().bfill()
 
-    # Save
-    df.to_parquet(OUT_FILE_PARQUET)
-    print(f"💾 Saved liquidity & funding → {OUT_FILE_PARQUET} ({len(df)} rows)")
-    print(df.tail(10).to_string(index=False))
-    print("\nColumns:", list(df.columns))
+        # --- Interpolate TBILL to fill weekend/holiday gaps ---
+        df["TBILL3M"] = df["TBILL3M"].interpolate(limit_direction="both")
+
+        # --- Compute derived features ---
+        df["Fed_BS_Delta_7d"] = df["Fed_BalanceSheet"].diff(7)
+        df["RRP_Delta_7d"] = df["RRP_Usage"].diff(7)
+        df["SOFR_EFFR_SPREAD"] = df["SOFR"] - df["EFFR"]
+        df["TBILL3M_MINUS_FEDFUNDS"] = df["TBILL3M"] - df["EFFR"]
+
+        # --- Fill short NaN in deltas ---
+        for c in ["Fed_BS_Delta_7d", "RRP_Delta_7d"]:
+            df[c] = df[c].ffill().bfill()
+
+        # --- Liquidity composite (rank weighted) ---
+        df["LIQ_COMPOSITE"] = (
+            df["RRP_Delta_7d"].rank(pct=True) * 0.4 +
+            df["Fed_BS_Delta_7d"].rank(pct=True) * 0.4 +
+            (df["SOFR_EFFR_SPREAD"] * -1).rank(pct=True) * 0.2
+        )
+
+        df["LIQ_COMPOSITE_30d_mean"] = df["LIQ_COMPOSITE"].rolling(30, min_periods=5).mean()
+
+        # --- Normalize LIQ_COMPOSITE 0-1 for easier comparison ---
+        liq_min, liq_max = df["LIQ_COMPOSITE"].min(), df["LIQ_COMPOSITE"].max()
+        df["LIQ_COMPOSITE_NORM"] = (df["LIQ_COMPOSITE"] - liq_min) / (liq_max - liq_min)
+
+        # --- Final fill ---
+        df = df.ffill().bfill()
+
+        # --- Validate no NaN left ---
+        for c in df.columns:
+            if df[c].isna().any():
+                raise ValueError(f"❌ Missing values remain in {c}")
+
+        return df
+
+    merged = compute_features(merged)
+
+    # =============================
+    # SAVE
+    # =============================
+    merged.to_parquet(OUT_FILE_PARQUET)
+    print(f"[{datetime.now()}] 💾 Saved liquidity & funding → {OUT_FILE_PARQUET} ({len(merged)} rows)")
+    print("🔎 Last 10 rows:")
+    print(merged.tail(10).to_string(index=False))
 
 
 if __name__ == "__main__":
