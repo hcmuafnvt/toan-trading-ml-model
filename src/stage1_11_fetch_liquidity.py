@@ -51,14 +51,20 @@ def fetch_series(series_id, colname):
 
 def compute_features(df):
     """Compute deltas, spreads, composite index, and rolling mean."""
-    # --- Fill TBILL3M early (has missing on weekends) ---
-    if "TBILL3M" in df.columns:
-        df["TBILL3M"] = df["TBILL3M"].ffill().bfill()
+    # --- Fill key base columns early ---
+    for base_col in ["Fed_BalanceSheet", "RRP_Usage", "SOFR", "EFFR", "TBILL3M"]:
+        if base_col in df.columns:
+            df[base_col] = df[base_col].ffill().bfill()
 
+    # --- Compute deltas & spreads ---
     df["Fed_BS_Delta_7d"] = df["Fed_BalanceSheet"].diff(7)
     df["RRP_Delta_7d"] = df["RRP_Usage"].diff(7)
     df["SOFR_EFFR_SPREAD"] = df["SOFR"] - df["EFFR"]
     df["TBILL3M_MINUS_FEDFUNDS"] = df["TBILL3M"] - df["EFFR"]
+
+    # Fill initial NaN in delta columns (from first 7 days)
+    for delta_col in ["Fed_BS_Delta_7d", "RRP_Delta_7d"]:
+        df[delta_col] = df[delta_col].ffill().bfill()
 
     # --- Compute composite liquidity index (rank-weighted) ---
     df["LIQ_COMPOSITE"] = (
@@ -67,15 +73,10 @@ def compute_features(df):
         (df["SOFR_EFFR_SPREAD"] * -1).rank(pct=True) * 0.2
     )
 
-    # rolling 30-day mean
     df["LIQ_COMPOSITE_30d_mean"] = df["LIQ_COMPOSITE"].rolling(30, min_periods=5).mean()
 
-    # --- Fill remaining NaN after computation ---
-    for col in [
-        "Fed_BalanceSheet", "RRP_Usage", "SOFR", "EFFR",
-        "LIQ_COMPOSITE", "LIQ_COMPOSITE_30d_mean", "TBILL3M", "TBILL3M_MINUS_FEDFUNDS"
-    ]:
-        df[col] = df[col].ffill().bfill()
+    # --- Fill remaining NaN globally ---
+    df = df.ffill().bfill()
 
     # --- Final validation ---
     for c in df.columns:
