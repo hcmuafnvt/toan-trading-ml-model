@@ -45,11 +45,11 @@ OUT_FILE_PARQUET = "data/liquidity_funding.parquet"
 LOG_FILE         = "logs/stage1_11_fetch_liquidity.log"
 
 FRED_SERIES = {
-    "WALCL": "Fed_BalanceSheet",
-    "RRPONTSYD": "RRP_Usage",
-    "TB3MS": "TBILL3M",
-    "SOFR": "SOFR",
-    "EFFR": "EFFR",
+    "WALCL": "Fed_BalanceSheet",      # Fed balance sheet (weekly)
+    "RRPONTSYD": "RRP_Usage",         # Reverse Repo usage (daily)
+    "DTB3": "TBILL3M",                # ⚡ 3M T-Bill secondary market rate (daily)
+    "SOFR": "SOFR",                   # Secured Overnight Financing Rate
+    "EFFR": "EFFR",                   # Effective Fed Funds Rate
 }
 
 def ensure_dirs():
