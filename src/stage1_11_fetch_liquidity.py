@@ -200,6 +200,17 @@ def main():
     # drop dups on date keeping last
     big = big.sort_values("date").drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
 
+    # --- ✅ Normalize & forward-fill (Stage 1.11 v2 improvement) ---
+    big["date"] = pd.to_datetime(big["date"])
+    big = big.set_index("date").asfreq("B")  # resample to business days
+
+    # forward-fill key economic series (Fed updates weekly / no weekend data)
+    for col in ["Fed_BalanceSheet", "RRP_Usage", "TBILL3M", "SOFR", "EFFR"]:
+        if col in big.columns:
+            big[col] = big[col].ffill(limit=5)  # fill up to 1 week
+
+    big = big.reset_index().rename(columns={"date": "date"})
+
     # compute engineered features on full history
     big = compute_features(big)
 
