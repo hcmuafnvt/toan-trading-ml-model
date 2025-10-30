@@ -95,8 +95,9 @@ def main():
     df = df.reset_index().rename(columns={"index": "date"})
     df = df.sort_values("date").reset_index(drop=True)
 
-    # --- NEW: forward-fill Fed_BalanceSheet (weekly series) ---
-    df["Fed_BalanceSheet"] = df["Fed_BalanceSheet"].ffill()
+    # --- NEW: fix Fed_BalanceSheet (weekly series) ---
+    # Some early rows before the first Fed H.4.1 release are NaN → fill both sides
+    df["Fed_BalanceSheet"] = df["Fed_BalanceSheet"].ffill().bfill()
 
     # Forward-fill TBILL3M & spread-related columns
     for col in ["TBILL3M"]:
