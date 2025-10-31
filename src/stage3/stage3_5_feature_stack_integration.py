@@ -130,7 +130,8 @@ def main():
     log(f"💾 Saved feature stack → {OUT_FILE} ({len(merged):,} rows, {merged.shape[1]} cols)")
     log(f"🕒 Range: {merged.index.min()} → {merged.index.max()}")
     log("✅ Stage 3.5 completed (feature stack is now canonical input for Stage 4)")
-    print(merged.head(5).to_string())
+    #print(merged.head(5).to_string())
+    log(f"✅ Final check — non-null targets: {merged['target_label'].notna().sum():,}")
 
 
 if __name__ == "__main__":
