@@ -54,9 +54,24 @@ def main():
 
     labels = labels[["target_label", "target_is_trainable"]].copy()
     labels = labels[labels["target_is_trainable"] == 1]
+    
+    # Align features (window_end_time) với label timestamp gần nhất nhưng <= window_end_time
+    feat = feat.sort_index()
+    labels = labels.sort_index()
 
-    # Align theo thời gian (window_end_time gần nhất trước label timestamp)
-    merged = labels.join(feat, how="left").ffill().dropna()
+    # Dùng asof join thay vì join trực tiếp
+    merged = pd.merge_asof(
+        labels,
+        feat,
+        left_index=True,
+        right_index=True,
+        direction="backward",  # lấy feature gần nhất phía trước
+    )
+
+    # loại NaN nếu có
+    merged = merged.dropna()
+    print(f"[DEBUG] merged shape: {merged.shape}")
+    print(f"[DEBUG] merged time range: {merged.index.min()} → {merged.index.max()}")
     log(f"🔗 Aligned samples: {merged.shape}")
 
     X = merged.drop(columns=["target_label", "target_is_trainable"])
