@@ -1,0 +1,47 @@
+🎯 Stage 3 — Label Engineering & Feature Stack
+(đây là phần “linh hồn” của pipeline, nơi ta tạo target labels và chuẩn bị feature-set cho mô hình học được)
+
+⸻
+
+🧭 Mục tiêu chung
+
+Xây dựng pipeline gán nhãn + feature stack chuyên nghiệp, làm đầu vào huấn luyện cho ML (LightGBM, XGBoost, v.v.).
+Toàn bộ dữ liệu Stage 3 đều dựa trên baseline đã freeze ở Stage 2.
+
+⸻
+
+🧱 Roadmap chi tiết Stage 3
+
+Mã stage
+Tên
+Mục đích chính
+Output file
+3.1
+Label Definition & Generation
+Tạo nhãn (targets) dựa trên biến động giá tương lai, TP/SL ảo, hoặc momentum.
+data/stage3_labels.parquet
+3.2
+Label QA & Integrity Check
+Kiểm tra nhãn: phân phối, tỷ lệ, leak, độ cân bằng.
+logs/stage3_label_audit.txt
+3.3
+Feature Alignment & Stack
+Kết hợp features Stage 2 + labels → frame train/test.
+data/stage3_feature_stack.parquet
+3.4
+Feature Sanitization & Reduction
+Chuẩn hoá, lọc, loại feature noise; áp chuẩn tsfresh & LightGBM.
+data/stage3_features_sanitized.parquet
+3.5
+Train/Valid/Test Split & Export
+Tạo splits chuẩn (rolling window, WF), xuất chuẩn cho Stage 4.
+data/stage3_dataset_ready.parquet + metadata JSON
+
+
+🧩 Nguyên tắc thiết kế
+1.	No Leakage: nhãn phải dùng future price nhưng không ảnh hưởng hiện tại.
+2.	Consistent TimeIndex: toàn bộ UTC M5 (= 296 996 rows).
+3.	Multi-Pair Support: nhãn mặc định tính trên gbpusd_close, sau đó mở rộng các pair.
+4.	Explainability First: mỗi label sẽ có cả dạng raw, binary, ternary và regression.
+5.	Stage-by-Stage Freeze: sau mỗi sub-stage QA xong mới được chuyển bước tiếp theo.
+
