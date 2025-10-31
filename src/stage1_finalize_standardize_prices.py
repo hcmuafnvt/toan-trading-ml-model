@@ -7,15 +7,22 @@ DATA_DIR = Path("data")
 for file in DATA_DIR.glob("*_M5_clean.parquet"):
     df = pd.read_parquet(file)
 
+    # --- Xóa cột close cũ nếu đã tồn tại ---
+    if "close" in df.columns and "mid_c" in df.columns:
+        df = df.drop(columns=["close"])
+
     # --- Chuẩn hóa cột ---
-    if all(c in df.columns for c in ["mid_o", "mid_h", "mid_l", "mid_c"]):
-        df = df.rename(columns={
-            "mid_o": "open",
-            "mid_h": "high",
-            "mid_l": "low",
-            "mid_c": "close"
-        })
-    df = df[["open", "high", "low", "close", "volume"]]
+    rename_map = {
+        "mid_o": "open",
+        "mid_h": "high",
+        "mid_l": "low",
+        "mid_c": "close",
+    }
+    df = df.rename(columns=rename_map)
+
+    # --- Giữ đúng 5 cột cần thiết ---
+    keep_cols = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
+    df = df[keep_cols]
 
     # --- Chuẩn hóa index ---
     if not isinstance(df.index, pd.DatetimeIndex):
