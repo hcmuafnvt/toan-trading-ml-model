@@ -1,0 +1,91 @@
+Stage con
+Tên
+Mục tiêu chính
+Output (baseline)
+2.1
+Time Alignment Engine
+Chuẩn hóa toàn bộ thời gian giữa các nguồn: OANDA M5, Calendar, Macro, Liquidity → tất cả UTC, align theo nearest-event hoặc forward-fill logic.
+data/fx_timegrid.parquet (khung thời gian chính)
+2.2
+Event Fusion (Calendar → FX)
+Map các sự kiện kinh tế vào từng timestamp giá. Ví dụ: trong ±30 phút quanh event, tạo feature: event_impact, event_zscore, is_event_window.
+data/features_calendar_fx.parquet
+2.3
+Macro Fusion (Yields, Spreads → FX)
+Resample macro drivers (daily → M5), dùng forward-fill hoặc EMA-smoothing, thêm các derivative features (change rate, z-score).
+data/features_macro_fx.parquet
+2.4
+Liquidity Fusion (Funding → FX)
+Gắn các biến liquidity (Fed BS, RRP, SOFR spread, composite) vào timegrid, thêm lag/rolling features.
+data/features_liquidity_fx.parquet
+2.5
+Technical Indicators (Price-based)
+Tính các feature truyền thống (EMA, RSI, ATR, volatility, returns, range ratio, volume delta, etc.).
+data/features_price_tech.parquet
+2.6
+Feature Unification & Sanitization
+Gộp toàn bộ feature set lại thành một DataFrame, kiểm tra NaN, duplicate, outlier; chuẩn hóa cột (snake_case, clean names).
+logs/stage2_features.csv (chuẩn pipeline)
+2.7
+Feature Quality Diagnostics
+Đánh giá completeness, variance, correlation, redundancy. Loại bỏ feature noise trước khi ML train.
+logs/stage2_diagnostics.txt + chart
+2.8
+Baseline Freeze & Documentation
+Xác nhận final feature matrix đạt chuẩn ML training (≥ 99 % non-missing, normalized), đóng băng dataset và sinh Stage 2 Summary Doc.
+data/stage2_feature_matrix.parquet + DOCX summary
+
+Chiến lược kỹ thuật chủ đạo
+	1.	Time Index:
+	•	Dùng timegrid M5 làm master.
+	•	Các nguồn daily (macro, liquidity) → forward-fill hoặc apply at 00:00 UTC.
+	•	Các event (timestamp) → align nearest candle ±30 m (configurable).
+	2.	Feature Value Transformation:
+	•	Chuẩn hóa các giá trị (z-score hoặc rank).
+	•	Tạo thêm các feature temporal (lag1, lag3, diff).
+	3.	Data Sanitization:
+	•	Replace early_stopping_rounds bằng callbacks (Stage 3 compat).
+	•	Clean tên cột ([^A-Za-z0-9_]+ → _).
+	•	Validate không NaN, không Inf.
+	4.	Output Consistency:
+	•	Mọi stage 2.x đều lưu ở data/ hoặc logs/ đúng quy ước AlphaForge.
+	•	Mỗi sub-stage chỉ sinh 1 file baseline duy nhất.
+
+⸻
+
+📈 Kết quả mong đợi khi hoàn tất Stage 2
+	•	Dataset duy nhất, dạng time-series, với:
+	•	~1000 feature/observation.
+	•	Đồng bộ vĩ mô + vi mô + technical.
+	•	Không NaN, không drift timestamp.
+	•	Sẵn sàng feed vào Stage 3 — Model Train & Alpha Backtest.
+
+⸻
+
+Tôi sẽ bắt đầu Stage 2.1 – Time Alignment Engine, nơi ta build khung thời gian master fx_timegrid từ dữ liệu OANDA M5.
+👉 Bạn có muốn tôi generate luôn script khởi tạo src/stage2_1_time_alignment.py (đặt baseline cho Stage 2)?
+
+
+=============
+
+
+Nhắc lại vị trí hiện tại trong Stage 2:
+	•	2.1: fx_timegrid ✅ (tạo lưới thời gian M5 chuẩn từ GBP_USD_M5_std.parquet)
+	•	2.2: sync price series vào lưới thời gian → giá, volume
+	•	2.3: sync các driver vĩ mô (macro_fxdrivers.parquet)
+	•	2.4: sync liquidity_funding.parquet
+	•	2.5: sync econ_calendar_features.parquet (các event high-impact)
+→ Kết quả gom lại 1 DataFrame time-series M5 đầy đủ kiểu “feature store thô”.
+
+Bây giờ làm bước kế tiếp: Stage 2.2 – merge giá vào fx_timegrid.
+
+Mục tiêu Stage 2.2
+	•	Đọc fx_timegrid.parquet (đã tạo).
+	•	Đọc từng cặp price chuẩn hóa *_M5_std.parquet (GBP, EUR, JPY, XAU).
+	•	Resample các cặp này lên full lưới thời gian M5 (forward-fill giữa các gap).
+	•	Gắn chúng vào fx_timegrid với prefix theo cặp, ví dụ:
+	•	gbpusd_close, gbpusd_volume
+	•	eurusd_close, eurusd_volume
+	•	usdjpy_close, usdjpy_volume
+	•	xauusd_close, xauusd_volume
+	•	Lưu output mới: data/stage2_prices_merged.parquet
