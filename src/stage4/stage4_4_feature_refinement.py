@@ -68,12 +68,12 @@ def main():
     # -----------------------------
     log("🔗 Aligning features with labels via merge_asof...")
     merged = pd.merge_asof(
-        labels,
-        features,
+        features.sort_index(),
+        labels.sort_index(),
         left_index=True,
         right_index=True,
-        direction="nearest",                 # two-sided matching
-        tolerance=pd.Timedelta("48h"),       # max ±2 days tolerance
+        direction="forward",            # lấy label gần nhất sau window_end_time
+        tolerance=pd.Timedelta("48h"),  # chấp nhận lệch 2 ngày
     )
 
     log(f"[DEBUG] merged shape pre-dropna: {merged.shape}")
