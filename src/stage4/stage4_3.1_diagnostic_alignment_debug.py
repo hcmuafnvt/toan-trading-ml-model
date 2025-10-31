@@ -76,7 +76,7 @@ def main():
     for idx, row in feat.iterrows():
         ts_end = row["window_end"]
         # label about 20 bars ahead of window end
-        target_ts = ts_end + pd.Timedelta(minutes=100)
+        target_ts = ts_end  # label tại chính điểm kết thúc window
         if target_ts in lab.index:
             fwd_move = lab.loc[target_ts, "gbpusd_ret_fwd20_pips"]
             joined.append((idx, ts_end, fwd_move))

@@ -1,0 +1,57 @@
+Stage 4 — Machine Learning Feature Extraction & Modeling
+
+🎯 Mục tiêu tổng thể
+
+Từ file baseline
+data/stage3_feature_stack.parquet
+→ tạo ra feature matrix huấn luyện, qua 3 lớp:
+
+Stage
+Mục tiêu chính
+Output
+4.1
+Extract temporal features (tsfresh)
+logs/stage4_tsfresh_features.csv
+4.2
+Feature selection + sanitation
+logs/stage4_selected_features.csv
+4.3
+Train LightGBM base model (v1)
+logs/stage4_model_lgbm.txt
+4.4
+Evaluate backtest folds (WF / regime)
+logs/stage4_backtest_results.txt
+4.5
+Model QA → freeze baseline
+data/stage4_model_baseline.txt
+
+
+⚙️ Stage 4.1 — Tsfresh Feature Extraction
+
+Input:
+data/stage3_feature_stack.parquet (296 996 × 66)
+
+Quy trình:
+	1.	Load subset các cột giá (px_gbpusd_close, px_eurusd_close, …)
+	2.	Normalize & chunk theo session.
+	3.	Apply tsfresh.extract_features
+với cấu hình EfficientFCParameters, n_jobs≈28.
+	4.	Sanitize tên cột (theo quy tắc Stage 2).
+	5.	Save → logs/stage4_tsfresh_features.csv.
+
+Output:
+Feature frame (≈ 10 000 – 20 000 columns), time-aligned với label index.
+
+
+🔒 Kiểm soát chất lượng
+	•	Chỉ extract trên trainable samples (target_is_trainable = 1).
+	•	Bỏ vùng NaN/flat session để tránh overfit.
+	•	Sau khi chạy xong Stage 4.1, chạy script QA nhỏ:
+
+python3 src/stage4/stage4_1b_audit_features.py
+
+để xác nhận:
+	•	số lượng feature,
+	•	tỷ lệ NaN,
+	•	top variance,
+	•	runtime efficiency.
