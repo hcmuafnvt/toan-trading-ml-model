@@ -4,24 +4,34 @@
 Stage 4.7 — Feature Importance Validation (GBPUSD)
 
 Mục tiêu:
-- Kiểm tra xem 5 feature top-alpha có thực sự có tín hiệu ổn định không.
-- Train nhanh LightGBM → in AUC + top feature importance.
+1️⃣ Load top-α features từ Stage 4.6.
+2️⃣ Lọc subset các features tương ứng trong stage4_refined_features.
+3️⃣ Train lại LightGBM và kiểm tra feature importance (AUC + ranking).
 
 Input:
-  logs/stage4_refined_features_gbpusd.csv
-  logs/stage4_top_features_gbpusd.csv
-  data/stage3_train_ready.parquet
+    logs/stage4_top_features_gbpusd.csv
+    logs/stage4_refined_features_gbpusd.csv
+    data/stage3_train_ready.parquet
+Output:
+    logs/stage4_feature_importance_gbpusd.csv
+    logs/stage4_feature_importance_model.txt
 """
 
 import pandas as pd
 import numpy as np
+from pathlib import Path
 from datetime import datetime, timezone
+from sklearn.metrics import roc_auc_score, accuracy_score
 import lightgbm as lgb
-from sklearn.metrics import roc_auc_score
+import warnings
 
-FEATURE_FILE = "logs/stage4_refined_features_gbpusd.csv"
+warnings.filterwarnings("ignore")
+
 TOP_FEATURE_FILE = "logs/stage4_top_features_gbpusd.csv"
-LABEL_FILE = "data/stage3_train_ready.parquet"
+FEATURE_FILE     = "logs/stage4_refined_features_gbpusd.csv"
+LABEL_FILE       = "data/stage3_train_ready.parquet"
+OUT_IMPORTANCE   = "logs/stage4_feature_importance_gbpusd.csv"
+OUT_MODEL        = "logs/stage4_feature_importance_model.txt"
 
 def log(msg: str):
     now = datetime.now(timezone.utc).strftime("[%Y-%m-%d %H:%M:%S UTC]")
@@ -30,9 +40,9 @@ def log(msg: str):
 def main():
     log("🚀 Stage 4.7 — Feature Importance Validation (GBPUSD)")
 
-    # 1️⃣ Load data
-    features = pd.read_csv(FEATURE_FILE, index_col=0, parse_dates=True)
-    # load top features với nhiều schema khác nhau
+    # -----------------------------
+    # 1️⃣ Load top features (support multiple schemas)
+    # -----------------------------
     top_feats = pd.read_csv(TOP_FEATURE_FILE)
 
     if "feature" in top_feats.columns:
@@ -42,68 +52,95 @@ def main():
     elif "top5_features" in top_feats.columns:
         selected = [f.strip() for f in top_feats["top5_features"].iloc[0].split(",")]
     else:
-        raise KeyError("❌ Không tìm thấy cột feature_name / feature / top5_features trong top feature file")
+        raise KeyError("❌ Không tìm thấy cột feature_name / feature / top5_features trong file top features")
 
     log(f"📊 Loaded top features: {selected}")
 
+    # -----------------------------
+    # 2️⃣ Load refined features
+    # -----------------------------
+    features = pd.read_csv(FEATURE_FILE, index_col=0, parse_dates=True)
+    log(f"📊 Loaded refined feature set: {features.shape}")
+
+    # Chỉ giữ lại những cột có trong selected
+    features = features[[c for c in selected if c in features.columns]]
+    log(f"🎯 Using {len(features.columns)} selected features")
+
+    # -----------------------------
+    # 3️⃣ Load labels
+    # -----------------------------
     labels = pd.read_parquet(LABEL_FILE)
-
-    # standardize label naming
     if "target_label" not in labels.columns:
-        labels = labels.rename(columns={"lbl_mc_012": "target_label",
-                                        "mask_train": "target_is_trainable"})
-    labels = labels[labels["target_is_trainable"] == 1]
+        labels = labels.rename(columns={
+            "lbl_mc_012": "target_label",
+            "mask_train": "target_is_trainable"
+        })
+
     labels.index = pd.to_datetime(labels.index, utc=True)
+    labels = labels.sort_index()
 
-    log(f"📊 Loaded features: {features.shape}")
-    log(f"📊 Loaded top features: {list(top_feats['feature'])}")
+    # Khớp label với index của features
+    y = labels.loc[features.index, "target_label"].fillna(method="ffill").astype(int)
+    log(f"📈 Matched labels: {y.shape}")
 
-    # 2️⃣ align labels and select features
-    X = features[top_feats["feature"]]
-    y = labels["target_label"].reindex(X.index, method="ffill").fillna(method="bfill").astype(int)
-
-    log(f"🔗 Aligned data shape: {X.shape}, labels: {y.shape}")
-
-    # 3️⃣ train/test split
-    split = int(len(X) * 0.8)
-    X_train, X_valid = X.iloc[:split], X.iloc[split:]
+    # -----------------------------
+    # 4️⃣ Train / validation split
+    # -----------------------------
+    split = int(len(features) * 0.8)
+    X_train, X_valid = features.iloc[:split], features.iloc[split:]
     y_train, y_valid = y.iloc[:split], y.iloc[split:]
 
-    # 4️⃣ LightGBM training
+    # -----------------------------
+    # 5️⃣ LightGBM training
+    # -----------------------------
     params = dict(
         objective="binary",
-        metric="auc",
+        metric=["binary_logloss", "auc"],
         learning_rate=0.05,
-        num_leaves=31,
+        num_leaves=64,
+        feature_fraction=0.8,
+        bagging_fraction=0.8,
+        bagging_freq=5,
         seed=42,
-        n_jobs=8,
+        n_jobs=28,
     )
 
     dtrain = lgb.Dataset(X_train, label=y_train)
     dvalid = lgb.Dataset(X_valid, label=y_valid)
 
+    log("🚀 Training LightGBM on top features...")
     model = lgb.train(
         params,
         dtrain,
-        valid_sets=[dvalid],
-        num_boost_round=300,
-        callbacks=[lgb.early_stopping(20), lgb.log_evaluation(50)],
+        valid_sets=[dtrain, dvalid],
+        num_boost_round=500,
+        callbacks=[lgb.early_stopping(30), lgb.log_evaluation(50)],
     )
 
+    # -----------------------------
+    # 6️⃣ Evaluate
+    # -----------------------------
     preds = model.predict(X_valid)
     auc = roc_auc_score(y_valid, preds)
-    log(f"📈 Validation AUC: {auc:.4f}")
+    preds_bin = (preds > 0.5).astype(int)
+    acc = accuracy_score(y_valid, preds_bin)
 
-    imp = pd.DataFrame({
-        "feature": X.columns,
-        "importance": model.feature_importance(),
+    log(f"📊 Validation AUC: {auc:.4f}")
+    log(f"📊 Accuracy: {acc:.4f}")
+
+    # -----------------------------
+    # 7️⃣ Feature importance
+    # -----------------------------
+    importance = pd.DataFrame({
+        "feature": model.feature_name(),
+        "importance": model.feature_importance(importance_type="gain")
     }).sort_values("importance", ascending=False)
 
-    log("🏆 Top features by importance:")
-    print(imp.head(10).to_string(index=False))
+    importance.to_csv(OUT_IMPORTANCE, index=False)
+    model.save_model(OUT_MODEL)
 
-    imp.to_csv("logs/stage4_feature_importance_validate_gbpusd.csv", index=False)
-    log("💾 Saved → logs/stage4_feature_importance_validate_gbpusd.csv")
+    log(f"💾 Saved feature importance → {OUT_IMPORTANCE}")
+    log(f"💾 Saved model → {OUT_MODEL}")
     log("✅ Stage 4.7 completed successfully")
 
 if __name__ == "__main__":
