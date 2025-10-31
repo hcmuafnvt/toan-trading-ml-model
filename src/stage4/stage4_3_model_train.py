@@ -100,32 +100,30 @@ def load_features(path: str) -> pd.DataFrame:
 
 def load_labels(path: str) -> pd.DataFrame:
     """
-    We load stage3_train_ready:
-    - keep ['target_label','target_is_trainable']
-    - drop choppy (label==1)
-    - map {0:0, 2:1}
+    Load stage3_train_ready (actual schema):
+    - lbl_mc_012  → label multiclass (0,1,2)
+    - mask_train  → 1 = trainable
+    - reason      → drop reason
+    Keep only trainable rows and map to binary {0: short, 2: long}.
     """
     df = pd.read_parquet(path)
+
     # ensure datetime index
     if not isinstance(df.index, pd.DatetimeIndex):
         df.index = pd.to_datetime(df.index, utc=True, errors="coerce")
 
-    # columns check
-    needed_cols = ["target_label", "target_is_trainable"]
-    for c in needed_cols:
-        if c not in df.columns:
-            raise RuntimeError(f"Column {c} missing in stage3_train_ready")
+    if "lbl_mc_012" not in df.columns or "mask_train" not in df.columns:
+        raise RuntimeError("Expected columns ['lbl_mc_012', 'mask_train'] in train_ready")
 
     # filter trainable rows
-    df = df[df["target_is_trainable"] == 1].copy()
+    df = df[df["mask_train"] == 1].copy()
 
     # keep only classes 0 and 2
-    df = df[df["target_label"].isin([0, 2])].copy()
+    df = df[df["lbl_mc_012"].isin([0, 2])].copy()
 
     # map to binary 0/1
-    df["y_binary"] = df["target_label"].map({0: 0, 2: 1}).astype(int)
+    df["y_binary"] = df["lbl_mc_012"].map({0: 0, 2: 1}).astype(int)
 
-    # now we only need y_binary
     return df[["y_binary"]].sort_index()
 
 
