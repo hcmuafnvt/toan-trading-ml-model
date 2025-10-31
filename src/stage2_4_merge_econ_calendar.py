@@ -19,8 +19,18 @@ def main():
     # --- Load econ calendar (Stage 1 baseline) ---
     cal = pd.read_parquet(CAL_FILE)
     cal = cal.copy()
-    cal["time_utc"] = pd.to_datetime(cal["time_utc"], utc=True)
-    cal = cal.set_index("time_utc").sort_index()
+    # --- Detect time column automatically ---
+    time_col = None
+    for cand in ["time_utc", "datetime_utc", "timestamp", "time_local"]:
+        if cand in cal.columns:
+            time_col = cand
+            break
+    if time_col is None:
+        raise ValueError(f"❌ No valid time column found in {CAL_FILE}")
+
+    cal[time_col] = pd.to_datetime(cal[time_col], utc=True, errors="coerce")
+    cal = cal.set_index(time_col).sort_index()
+    log(f"🕒 Using time column: {time_col}")
     log(f"📊 Loaded econ_calendar_features: {len(cal):,} rows")
 
     # --- Resample 5-min forward fill ---
