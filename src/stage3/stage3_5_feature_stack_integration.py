@@ -82,9 +82,13 @@ def main():
     # left = feat (to keep full timeline); right = labels
     # -------------------------------------------------
     merged = feat.join(
-        train_ready[["label_mc_012", "is_trainable", "drop_reason"]],
+        train_ready[["lbl_mc_012", "mask_train", "reason"]],
         how="left"
-    )
+    ).rename(columns={
+        "lbl_mc_012": "target_label",
+        "mask_train": "target_is_trainable",
+        "reason": "target_drop_reason",
+    })
 
     # -------------------------------------------------
     # 3. Rename label column to a stable training name
