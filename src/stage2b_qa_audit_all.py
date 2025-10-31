@@ -44,9 +44,13 @@ def audit_file(name, path, ref_index=None):
             log("   ✅ Time alignment OK")
     if df.columns.duplicated().any():
         log("   ⚠ Duplicate columns detected!")
+    
     # quick prefix check
-    prefixes = df.columns.str.split("_").str[0].value_counts().head(5)
-    log(f"   🔤 Top column prefixes: {dict(prefixes)}")
+    if len(df.columns) > 0:
+        prefixes = df.columns.astype(str).str.split("_").str[0].value_counts().head(5)
+        log(f"   🔤 Top column prefixes: {dict(prefixes)}")
+    else:
+        log("   ℹ No columns (empty structure, likely timegrid).")
     print("-" * 90)
     return df
 
