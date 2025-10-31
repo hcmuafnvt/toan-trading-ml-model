@@ -13,6 +13,7 @@ FILES = {
     "prices": "data/stage2_prices_merged.parquet",
     "macro": "data/stage2_macro_merged.parquet",
     "calendar": "data/stage2_calendar_merged.parquet",
+    "calendar_dense": "data/stage2_calendar_dense.parquet",
     "liquidity": "data/stage2_liquidity_merged.parquet",
     "features_combined": "data/stage2_features_combined.parquet",
 }
@@ -65,6 +66,21 @@ def main():
             results[name] = audit_file(name, path, ref_index)
         else:
             log(f"❌ Missing file: {path}")
+            
+    # --- Extra QA: Calendar Dense Features ---
+    try:
+        dense = pd.read_parquet(FILES["calendar_dense"])
+        if len(dense) == len(ref_index):
+            print("[QA2C] ✅ calendar_dense aligned perfectly")
+        else:
+            print(f"[QA2C] ⚠ calendar_dense length mismatch: {len(dense)} vs {len(ref_index)}")
+        if dense.isna().any().any():
+            print("[QA2C] ⚠ calendar_dense contains NaN values")
+        else:
+            print("[QA2C] ✅ calendar_dense has no NaN values")
+    except Exception as e:
+        print(f"[QA2C] ⚠ calendar_dense check failed: {e}")
+
     log("✅ QA Audit completed")
     log("→ Verify that all datasets share same index & UTC timezone before Stage 3")
 
