@@ -41,7 +41,18 @@ def main():
     df = pd.read_csv(REFINED_FEATURES, index_col=0, parse_dates=True)
     labels = pd.read_parquet(LABEL_FILE)
     labels.index = pd.to_datetime(labels.index, utc=True)
-    labels = labels[labels["target_is_trainable"] == 1]
+
+    # Chuẩn hóa tên cột cho tương thích
+    if "target_label" not in labels.columns:
+        labels = labels.rename(columns={
+            "lbl_mc_012": "target_label",
+            "mask_train": "target_is_trainable",
+            "reason": "target_drop_reason"
+        })
+
+    # Nếu vẫn chưa có cột trainable → tạo mặc định = 1
+    if "target_is_trainable" not in labels.columns:
+        labels["target_is_trainable"] = 1
     y = labels.loc[df.index, "target_label"].fillna(method="ffill").astype(int)
 
     log(f"📊 Loaded refined features: {df.shape}")
