@@ -63,8 +63,24 @@ def main():
                 grid.iloc[i, grid.columns.get_loc("cal_med_impact_ahead_30m")] = 1
 
     # --- Event count in past 1 hour ---
-    event_series = pd.Series(1, index=cal_events.index)
-    event_counts = event_series.reindex(times, method="ffill").rolling("60min").sum()
+    # --- Event count in past 1 hour (fix duplicate timestamps) ---
+    event_series = (
+        pd.Series(1, index=cal_events.index)
+        .groupby(level=0)
+        .size()               # gộp trùng timestamp
+        .rename("event_count")
+    )
+    event_series = event_series.sort_index()
+    event_series = event_series[~event_series.index.duplicated(keep="last")]
+
+    event_counts = (
+        event_series.reindex(times.union(event_series.index))
+        .sort_index()
+        .ffill()
+        .rolling("60min")
+        .sum()
+        .reindex(times)
+    )
     grid["cal_event_count_1h"] = event_counts.fillna(0).to_numpy()
 
     # --- Fill missing numeric ---
