@@ -8,12 +8,19 @@ Output: data/macro_liquidity.parquet
 import pandas as pd
 from datetime import datetime, timezone
 from fredapi import Fred
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+API_KEY = os.getenv("FRED_API_KEY")
+
+if not API_KEY or len(API_KEY.strip()) != 32:
+    raise ValueError(f"❌ Invalid or missing FRED_API_KEY: {API_KEY}")
 
 # =============================
 # CONFIG
 # =============================
 OUT_FILE_PARQUET = "data/macro_liquidity.parquet"
-API_KEY = "<YOUR_FRED_API_KEY>"
 START_DATE = "2020-01-01"
 END_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
