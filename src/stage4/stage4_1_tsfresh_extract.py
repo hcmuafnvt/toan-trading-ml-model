@@ -53,46 +53,39 @@ def build_windowed_series(px: pd.Series,
 
     values = px.values
     times = px.index
-
-    rows = []
-    start = 0
     n = len(px)
 
-    while start + window_size <= n:
+    rows = []
+    window_end_times = []  # để lưu timestamp cuối mỗi window
+
+    for start in range(0, n - window_size + 1, step):
         end = start + window_size
         seg_vals = values[start:end]
         seg_times = times[start:end]
 
-        # anchor = thời điểm KẾT THÚC window
+        # timestamp cuối cùng của window
         window_end_time = seg_times[-1]
+        window_end_times.append(window_end_time)
 
         seg_df = pd.DataFrame({
             "id":   window_end_time,   # sử dụng timestamp làm id
             "time": seg_times,         # thời gian từng điểm trong window
             "value": seg_vals.astype(float),
         })
-
         rows.append(seg_df)
-        start += step
 
     if not rows:
         raise ValueError("Không tạo được window nào (chuỗi quá ngắn so với WINDOW_SIZE).")
 
     out = pd.concat(rows, ignore_index=True)
 
-    # ✅ Giữ 'id' là số nguyên (không convert sang datetime)
-    # đảm bảo 'time' là datetime UTC
+    # đảm bảo time đúng UTC
     out["time"] = pd.to_datetime(out["time"], utc=True)
 
-    # ✅ Ghi nhớ window_end_time cho từng id để align với labels
-    window_end_times = []
-    for wid, grp in out.groupby("id"):
-        window_end_times.append(grp["time"].iloc[-1])
-    window_map = pd.Series(window_end_times, index=sorted(out["id"].unique()))
-    out.attrs["window_end_times"] = window_map
+    # ghi attribute window_end_times để align label sau này
+    out.attrs["window_end_times"] = pd.Series(pd.to_datetime(window_end_times, utc=True))
 
     return out
-
 
 def main():
     log("🚀 Stage 4.1 — Tsfresh Feature Extraction (GBPUSD, windowed)")
