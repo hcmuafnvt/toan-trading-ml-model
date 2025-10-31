@@ -3,15 +3,15 @@
 """
 Stage 4.4 — Feature Refinement & Quick Retrain (GBPUSD)
 
-Mục tiêu:
-1. Thêm directional / trend-based features từ tsfresh feature matrix.
-2. Chuẩn hoá dữ liệu (Z-score scaling) để LightGBM học tốt hơn.
-3. Train thử nhanh để kiểm tra xem có alpha xuất hiện (AUC > 0.55).
+Purpose:
+- Align tsfresh feature windows with labels from Stage 3.
+- Enrich with directional meta-features (mean/std/slope/etc.).
+- Scale features and run a quick LightGBM sanity test to check alpha.
 
-Input:
+Inputs:
     logs/stage4_tsfresh_features_gbpusd.csv
     data/stage3_train_ready.parquet
-Output:
+Outputs:
     logs/stage4_refined_features_gbpusd.csv
     logs/stage4_refined_model_gbpusd.txt
 """
@@ -24,14 +24,17 @@ from sklearn.preprocessing import StandardScaler
 import lightgbm as lgb
 from sklearn.metrics import roc_auc_score, accuracy_score, classification_report
 
+
 FEATURE_CSV = "logs/stage4_tsfresh_features_gbpusd.csv"
 LABEL_FILE  = "data/stage3_train_ready.parquet"
 OUT_FEATURE = "logs/stage4_refined_features_gbpusd.csv"
 OUT_MODEL   = "logs/stage4_refined_model_gbpusd.txt"
 
+
 def log(msg: str):
     now = datetime.now(timezone.utc).strftime("[%Y-%m-%d %H:%M:%S UTC]")
     print(f"{now} {msg}", flush=True)
+
 
 def main():
     log("🚀 Stage 4.4 — Feature Refinement & Quick Retrain (GBPUSD)")
@@ -39,12 +42,13 @@ def main():
     # -----------------------------
     # 1️⃣ Load data
     # -----------------------------
-    feat = pd.read_csv(FEATURE_CSV, index_col=0, parse_dates=True)
-    log(f"📥 Loaded features: {feat.shape}")
+    features = pd.read_csv(FEATURE_CSV, index_col=0, parse_dates=True)
+    log(f"📥 Loaded features: {features.shape}")
 
     labels = pd.read_parquet(LABEL_FILE)
     labels.index = pd.to_datetime(labels.index, utc=True)
-        # Backward compatibility — Stage 3 naming
+
+    # Standardize label column names
     if "target_label" not in labels.columns:
         labels = labels.rename(columns={
             "lbl_mc_012": "target_label",
@@ -52,41 +56,50 @@ def main():
             "reason": "target_drop_reason"
         })
 
+    # Keep only needed columns (but don't filter yet)
     labels = labels[["target_label", "target_is_trainable"]].copy()
-    labels = labels[labels["target_is_trainable"] == 1]
-    
-    # Align features (window_end_time) với label timestamp gần nhất nhưng <= window_end_time
-    feat = feat.sort_index()
+
+    # Sort for merge_asof
+    features = features.sort_index()
     labels = labels.sort_index()
 
-    # Dùng asof join thay vì join trực tiếp
+    # -----------------------------
+    # 2️⃣ Align features ↔ labels
+    # -----------------------------
+    log("🔗 Aligning features with labels via merge_asof...")
     merged = pd.merge_asof(
-        labels.sort_index(),
-        feat.sort_index(),
+        labels,
+        features,
         left_index=True,
         right_index=True,
-        direction="nearest",                 # cho phép khớp 2 chiều
-        tolerance=pd.Timedelta("48H"),       # cho phép lệch tối đa 2 ngày
+        direction="nearest",                 # two-sided matching
+        tolerance=pd.Timedelta("48h"),       # max ±2 days tolerance
     )
-    
-    print(f"[DEBUG] merged shape: {merged.shape}")
-    print(f"[DEBUG] merged time range: {merged.index.min()} → {merged.index.max()}")
-    print(f"[DEBUG] NaN ratio: {merged.isna().mean().mean():.3f}")
 
-    # loại NaN nếu có
+    log(f"[DEBUG] merged shape pre-dropna: {merged.shape}")
+    log(f"[DEBUG] merged time range: {merged.index.min()} → {merged.index.max()}")
+    log(f"[DEBUG] NaN ratio: {merged.isna().mean().mean():.3f}")
+
     merged = merged.dropna()
-    print(f"[DEBUG] merged shape: {merged.shape}")
-    print(f"[DEBUG] merged time range: {merged.index.min()} → {merged.index.max()}")
-    log(f"🔗 Aligned samples: {merged.shape}")
+    log(f"[DEBUG] merged shape post-dropna: {merged.shape}")
+    log(f"[DEBUG] merged time range: {merged.index.min()} → {merged.index.max()}")
+
+    # Only now filter trainable
+    if "target_is_trainable" in merged.columns:
+        merged = merged[merged["target_is_trainable"] == 1]
+        log(f"[DEBUG] kept trainable rows: {len(merged)}")
+
+    if merged.empty:
+        raise RuntimeError("❌ Merged dataset empty after alignment or filtering — check label timestamps.")
 
     X = merged.drop(columns=["target_label", "target_is_trainable"])
     y = merged["target_label"].astype(int)
 
+    log(f"🔗 Final aligned samples: {X.shape}")
+
     # -----------------------------
-    # 2️⃣ Directional feature creation
+    # 3️⃣ Directional meta-features
     # -----------------------------
-    # mean vs last value difference, slope, momentum ratio
-    # (approximate trend signals)
     log("➕ Adding directional meta-features...")
     X["feat_mean"] = X.mean(axis=1)
     X["feat_std"] = X.std(axis=1)
@@ -96,7 +109,7 @@ def main():
     X["feat_volratio"] = (X["feat_std"] / (X["feat_mean"].abs() + 1e-6)).fillna(0)
 
     # -----------------------------
-    # 3️⃣ Z-score normalization
+    # 4️⃣ Standardization
     # -----------------------------
     log("⚖️ Scaling features (z-score)...")
     scaler = StandardScaler()
@@ -111,7 +124,7 @@ def main():
     log(f"💾 Saved refined features → {OUT_FEATURE} ({X_scaled.shape})")
 
     # -----------------------------
-    # 4️⃣ Quick LightGBM training
+    # 5️⃣ Quick LightGBM train/test
     # -----------------------------
     log("⚙️ Quick train/validation split...")
     split = int(len(X_scaled) * 0.8)
@@ -144,7 +157,7 @@ def main():
     )
 
     # -----------------------------
-    # 5️⃣ Evaluate
+    # 6️⃣ Evaluation
     # -----------------------------
     preds = model.predict(X_valid)
     auc = roc_auc_score(y_valid, preds)
