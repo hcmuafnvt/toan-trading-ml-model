@@ -1,6 +1,8 @@
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
+import pandas as pd
+pd.set_option("future.no_silent_downcasting", True)
 
 TIMEGRID_FILE = "data/fx_timegrid.parquet"
 CAL_FILE = "data/econ_calendar_features.parquet"
