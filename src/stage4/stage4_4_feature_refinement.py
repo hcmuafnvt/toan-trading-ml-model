@@ -44,6 +44,14 @@ def main():
 
     labels = pd.read_parquet(LABEL_FILE)
     labels.index = pd.to_datetime(labels.index, utc=True)
+        # Backward compatibility — Stage 3 naming
+    if "target_label" not in labels.columns:
+        labels = labels.rename(columns={
+            "lbl_mc_012": "target_label",
+            "mask_train": "target_is_trainable",
+            "reason": "target_drop_reason"
+        })
+
     labels = labels[["target_label", "target_is_trainable"]].copy()
     labels = labels[labels["target_is_trainable"] == 1]
 
