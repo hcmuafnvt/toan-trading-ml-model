@@ -38,6 +38,7 @@ def main():
 
     # --- Resample 5-min forward fill ---
     cal_resampled = cal.resample("5min").ffill()
+    cal_resampled = cal_resampled.infer_objects(copy=False)
     cal_resampled = cal_resampled.loc[
         (cal_resampled.index >= grid.index.min()) &
         (cal_resampled.index <= grid.index.max())
