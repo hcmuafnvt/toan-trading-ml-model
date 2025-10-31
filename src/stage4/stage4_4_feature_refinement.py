@@ -61,12 +61,17 @@ def main():
 
     # Dùng asof join thay vì join trực tiếp
     merged = pd.merge_asof(
-        labels,
-        feat,
+        labels.sort_index(),
+        feat.sort_index(),
         left_index=True,
         right_index=True,
-        direction="backward",  # lấy feature gần nhất phía trước
+        direction="nearest",                 # cho phép khớp 2 chiều
+        tolerance=pd.Timedelta("48H"),       # cho phép lệch tối đa 2 ngày
     )
+    
+    print(f"[DEBUG] merged shape: {merged.shape}")
+    print(f"[DEBUG] merged time range: {merged.index.min()} → {merged.index.max()}")
+    print(f"[DEBUG] NaN ratio: {merged.isna().mean().mean():.3f}")
 
     # loại NaN nếu có
     merged = merged.dropna()
