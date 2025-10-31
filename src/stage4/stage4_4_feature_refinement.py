@@ -67,22 +67,19 @@ def main():
     # 2️⃣ Align features ↔ labels
     # -----------------------------
     log("🔗 Aligning features with labels via merge_asof...")
+    # ✅ merge_asof: features → labels (forward)
     merged = pd.merge_asof(
         features.sort_index(),
         labels.sort_index(),
         left_index=True,
         right_index=True,
-        direction="forward",            # lấy label gần nhất sau window_end_time
-        tolerance=pd.Timedelta("48h"),  # chấp nhận lệch 2 ngày
+        direction="forward",            # lấy label ngay sau window_end_time
+        tolerance=pd.Timedelta("48h"),  # cho phép lệch tối đa 2 ngày
     )
 
     log(f"[DEBUG] merged shape pre-dropna: {merged.shape}")
     log(f"[DEBUG] merged time range: {merged.index.min()} → {merged.index.max()}")
-    log(f"[DEBUG] NaN ratio: {merged.isna().mean().mean():.3f}")
-
-    merged = merged.dropna()
-    log(f"[DEBUG] merged shape post-dropna: {merged.shape}")
-    log(f"[DEBUG] merged time range: {merged.index.min()} → {merged.index.max()}")
+    log(f"[DEBUG] NaN ratio: {merged.isna().mean().mean():.3f}")    
 
     # Only now filter trainable
     if "target_is_trainable" in merged.columns:
