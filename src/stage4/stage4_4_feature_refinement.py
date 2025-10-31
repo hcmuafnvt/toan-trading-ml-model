@@ -91,6 +91,7 @@ def main():
 
     X = merged.drop(columns=["target_label", "target_is_trainable"])
     y = merged["target_label"].astype(int)
+    y = y.clip(upper=1)  # 0=SHORT, 1=LONG (gom class 2 vào 1)
 
     log(f"🔗 Final aligned samples: {X.shape}")
 
@@ -115,6 +116,9 @@ def main():
         index=X.index,
         columns=X.columns
     )
+    
+    # ✅ Fill NaN sau scale (LightGBM không nhận NaN)
+    X_scaled = X_scaled.fillna(0)
 
     Path("logs").mkdir(exist_ok=True)
     X_scaled.to_csv(OUT_FEATURE)
