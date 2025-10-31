@@ -80,9 +80,16 @@ def build_windowed_series(px: pd.Series,
 
     out = pd.concat(rows, ignore_index=True)
 
-    # đảm bảo kiểu thời gian đúng UTC
-    out["id"] = pd.to_datetime(out["id"], utc=True)
+    # ✅ Giữ 'id' là số nguyên (không convert sang datetime)
+    # đảm bảo 'time' là datetime UTC
     out["time"] = pd.to_datetime(out["time"], utc=True)
+
+    # ✅ Ghi nhớ window_end_time cho từng id để align với labels
+    window_end_times = []
+    for wid, grp in out.groupby("id"):
+        window_end_times.append(grp["time"].iloc[-1])
+    window_map = pd.Series(window_end_times, index=sorted(out["id"].unique()))
+    out.attrs["window_end_times"] = window_map
 
     return out
 
@@ -133,6 +140,13 @@ def main():
     # columns = các feature tsfresh tạo ra
 
     log(f"📈 Extracted feature matrix shape: {extracted.shape}")
+    
+    # ✅ Gán real UTC timestamp (window_end_time) làm index cho mỗi window
+    window_map = series_long.attrs.get("window_end_times", None)
+    if window_map is not None:
+        extracted.index = pd.to_datetime(window_map.values, utc=True)
+        extracted.index.name = "window_end_time"
+        log(f"🕒 Assigned window_end_time index ({len(window_map)} windows)")
 
     # 5. Làm sạch tên cột cho LightGBM (rule fund-grade đã thống nhất)
     extracted.columns = (
