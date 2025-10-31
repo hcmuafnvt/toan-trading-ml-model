@@ -154,7 +154,12 @@ def main():
 
     # 7. Lưu CSV
     Path("logs").mkdir(parents=True, exist_ok=True)
-    extracted.to_csv(OUT_FEATURE_CSV, index=True)
+    # ✅ Save giữ nguyên định dạng thời gian UTC
+    extracted.to_csv(
+        OUT_FEATURE_CSV,
+        index=True,
+        date_format="%Y-%m-%d %H:%M:%S%z"
+    )
 
     log(f"💾 Saved → {OUT_FEATURE_CSV} ({extracted.shape[1]} features, {extracted.shape[0]} windows)")
     log("✅ Stage 4.1 completed successfully")
