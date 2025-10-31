@@ -28,7 +28,7 @@ def main():
     if time_col is None:
         raise ValueError(f"❌ No valid time column found in {CAL_FILE}")
 
-    cal[time_col] = pd.to_datetime(cal[time_col], utc=True, errors="coerce")
+    cal[time_col] = pd.to_datetime(cal[time_col], format="%H:%M", utc=True, errors="coerce")
     cal = cal.set_index(time_col).sort_index()
     log(f"🕒 Using time column: {time_col}")
     log(f"📊 Loaded econ_calendar_features: {len(cal):,} rows")
@@ -45,6 +45,7 @@ def main():
 
     # --- Align & merge ---
     merged = grid.join(cal_resampled, how="left").ffill()
+    merged = merged.infer_objects(copy=False)
 
     # --- Save output ---
     Path(OUT_FILE).parent.mkdir(parents=True, exist_ok=True)
