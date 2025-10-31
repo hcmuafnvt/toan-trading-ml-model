@@ -32,7 +32,20 @@ def main():
 
     # 1️⃣ Load data
     features = pd.read_csv(FEATURE_FILE, index_col=0, parse_dates=True)
+    # load top features với nhiều schema khác nhau
     top_feats = pd.read_csv(TOP_FEATURE_FILE)
+
+    if "feature" in top_feats.columns:
+        selected = top_feats["feature"].dropna().tolist()
+    elif "feature_name" in top_feats.columns:
+        selected = top_feats["feature_name"].dropna().tolist()
+    elif "top5_features" in top_feats.columns:
+        selected = [f.strip() for f in top_feats["top5_features"].iloc[0].split(",")]
+    else:
+        raise KeyError("❌ Không tìm thấy cột feature_name / feature / top5_features trong top feature file")
+
+    log(f"📊 Loaded top features: {selected}")
+
     labels = pd.read_parquet(LABEL_FILE)
 
     # standardize label naming
