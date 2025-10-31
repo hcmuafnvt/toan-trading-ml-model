@@ -33,6 +33,9 @@ def main():
     log(f"🕒 Using time column: {time_col}")
     log(f"📊 Loaded econ_calendar_features: {len(cal):,} rows")
 
+    # --- Remove duplicate timestamps before resampling ---
+    cal = cal[~cal.index.duplicated(keep="last")]
+
     # --- Resample 5-min forward fill ---
     cal_resampled = cal.resample("5min").ffill()
     cal_resampled = cal_resampled.loc[
